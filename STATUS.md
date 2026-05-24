@@ -7,11 +7,11 @@
 
 ## Current phase
 
-**Phase 0 — Setup** ✅ COMPLETE → ready for Phase 1
+**Phase 1 — Spikes** 🔄 IN PROGRESS
 
-Started: 2026-05-23 21:12 PDT
-Completed: 2026-05-23 21:15 PDT
-Target completion: hour 1
+Phase 0 completed: 2026-05-23 21:15 PDT
+Phase 1 started: 2026-05-23 21:25 PDT
+Target completion: hour 3
 
 ---
 
@@ -21,7 +21,7 @@ Target completion: hour 1
 |---|---|---|---|
 | Backend (B)   | wip/backend   | (none yet) | — |
 | Extension (E) | wip/extension | (none yet) | — |
-| Dashboard (D) | wip/dashboard | (none yet) | — |
+| Dashboard (D) | wip/dashboard | 744b4ac dash/scaffold: live force graph + layout | 2026-05-23 21:30 PDT |
 
 ---
 
