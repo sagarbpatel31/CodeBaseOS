@@ -7,11 +7,13 @@
 
 ## Current phase
 
-**Phase 0 — Setup** ✅ COMPLETE → ready for Phase 1
+**Phase 1 — Spikes** 🔄 IN PROGRESS
 
-Started: 2026-05-23 21:12 PDT
-Completed: 2026-05-23 21:15 PDT
-Target completion: hour 1
+Phase 0 completed: 2026-05-23 21:15 PDT
+Phase 1 started: 2026-05-23 21:25 PDT
+Target completion: hour 3
+
+Lane E (Extension): ✅ scaffold + status bar + hover stub DONE
 
 ---
 
@@ -20,7 +22,7 @@ Target completion: hour 1
 | Lane | Branch | Last commit | Timestamp |
 |---|---|---|---|
 | Backend (B)   | wip/backend   | (none yet) | — |
-| Extension (E) | wip/extension | (none yet) | — |
+| Extension (E) | wip/extension | extension/scaffold: hover + status bar + client stub | 2026-05-23 21:25 PDT |
 | Dashboard (D) | wip/dashboard | (none yet) | — |
 
 ---

@@ -29,6 +29,10 @@
       {
         "command": "codebaseos.handoff",
         "title": "CodebaseOS: Generate onboarding tour for current module"
+      },
+      {
+        "command": "codebaseos.openDashboard",
+        "title": "CodebaseOS: Open Dashboard"
       }
     ],
     "configuration": {
@@ -37,7 +41,12 @@
         "codebaseos.backendUrl": {
           "type": "string",
           "default": "http://localhost:8000",
-          "description": "URL of the CodebaseOS backend"
+          "description": "URL of the CodebaseOS backend API."
+        },
+        "codebaseos.dashboardUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "URL of the CodebaseOS dashboard (opened on status bar click)."
         },
         "codebaseos.enableCodeLens": {
           "type": "boolean",
