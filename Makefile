@@ -6,15 +6,15 @@ setup:
 
 # Verify HydraDB connection + schema migrations
 hydradb-test:
-	@echo "TODO: implement — .venv/bin/python -m pytest tests/test_phase1.py -v"
+	python -m pytest tests/test_phase1.py -v
 
 # Start the FastAPI backend (foreground)
 backend:
-	@echo "TODO: implement — .venv/bin/uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload"
+	uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
 
 # Ingest a repo by URL/path — usage: make ingest REPO=tokio-rs/tokio
 ingest:
-	@echo "TODO: implement — .venv/bin/cbos ingest $(REPO)"
+	cbos ingest $(REPO)
 
 # Start ngrok tunnel + webhook receiver
 webhooks:

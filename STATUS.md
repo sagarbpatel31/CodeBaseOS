@@ -7,11 +7,11 @@
 
 ## Current phase
 
-**Phase 0 — Setup** ✅ COMPLETE → ready for Phase 1
+**Phase 1 — Spikes (Lane B)** 🟡 IN PROGRESS
 
-Started: 2026-05-23 21:12 PDT
-Completed: 2026-05-23 21:15 PDT
-Target completion: hour 1
+Phase 0 completed: 2026-05-23 21:15 PDT
+Phase 1 Lane B started: 2026-05-23 21:30 PDT
+Target completion: hour 3
 
 ---
 
@@ -19,7 +19,7 @@ Target completion: hour 1
 
 | Lane | Branch | Last commit | Timestamp |
 |---|---|---|---|
-| Backend (B)   | wip/backend   | (none yet) | — |
+| Backend (B)   | wip/backend   | graph+ingester: bi-temporal schema + merkle + /status | 2026-05-23 21:45 PDT |
 | Extension (E) | wip/extension | (none yet) | — |
 | Dashboard (D) | wip/dashboard | (none yet) | — |
 
@@ -104,7 +104,9 @@ Pending merges awaiting human approval: 0
 
 Format: `[severity] [lane] description (workaround if known)`
 
-- [medium] [all] HydraDB SDK not yet installed — need to confirm SDK package name from HydraDB docs/Discord before Phase 1 Lane B begins. Add to pyproject.toml once confirmed.
+- [low] [backend] HydraDB SourceListResponse = Any — list_data response shape for knowledge sources is untyped in SDK. We access as dict; needs live API validation with real credentials.
+- [low] [backend] ContentFilter on knowledge sources needs live test — uncertain if source_fields={"type":"..."} filtering works for knowledge (not memories).
+- [medium] [all] .env not created — HYDRADB_API_KEY + GITHUB_TOKEN needed to run live tests (tests/test_phase1.py::test_hydradb_*). Unit tests (schema + merkle) pass without credentials.
 
 ---
 
