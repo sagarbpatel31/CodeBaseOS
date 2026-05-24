@@ -26,12 +26,13 @@ class BaseNode(BaseModel):
 
     model_config = {"populate_by_name": True}
 
-    def to_hydra_source(self) -> dict[str, Any]:
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
         """Serialize to HydraDB app_knowledge source object."""
         doc_meta: dict[str, Any] = {
             "tx_time": self.tx_time.isoformat(),
             "valid_time": self.valid_time.isoformat(),
-            "valid_time_end": self.valid_time_end.isoformat() if self.valid_time_end else None,
+            # HydraDB rejects None metadata values — use empty string sentinel
+            "valid_time_end": self.valid_time_end.isoformat() if self.valid_time_end else "",
             "episode_id": str(self.episode_id),
             "merkle_hash": self.merkle_hash,
             "source": self.source,
@@ -39,9 +40,12 @@ class BaseNode(BaseModel):
         }
         return {
             "id": str(self.id),
+            "tenant_id": tenant_id,
+            "sub_tenant_id": sub_tenant_id,
             "type": self.node_type,
             "title": f"{self.node_type}:{str(self.id)[:8]}",
-            "content": self.model_dump_json(),
+            # content must be a dict, not a JSON string
+            "content": self.model_dump(mode="json"),
             "timestamp": self.tx_time.isoformat(),
             "document_metadata": doc_meta,
         }
@@ -59,11 +63,12 @@ class Episode(BaseNode):
     outputs_hash: str = ""
     prev_hash: str = ""  # Merkle chain: hash of prior Episode
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Episode:{self.sequence_no}:{self.action_type}"
         src["document_metadata"].update({
-            "sequence_no": self.sequence_no,
+            # HydraDB drops numeric metadata — store ints as strings.
+            "sequence_no": str(self.sequence_no),
             "action_type": self.action_type,
             "prev_hash": self.prev_hash,
         })
@@ -81,10 +86,15 @@ class Repository(BaseNode):
     default_branch: str = "main"
     language_breakdown: dict[str, float] = Field(default_factory=dict)
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Repository:{self.name}"
         src["document_metadata"]["repo_name"] = self.name
+        # HydraDB overwrites `content` with its own doc structure, so any field
+        # we need to read back MUST live in document_metadata.
+        src["document_metadata"]["default_branch"] = self.default_branch
+        if self.github_id is not None:
+            src["document_metadata"]["github_id"] = str(self.github_id)
         return src
 
 
@@ -105,12 +115,13 @@ class Commit(BaseNode):
     deletions: int = 0
     repository_id: UUID = Field(default_factory=uuid4)
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Commit:{self.sha[:12]}"
         src["description"] = self.message[:200]
         src["document_metadata"].update({
             "sha": self.sha,
+            "author_name": self.author_name,
             "author_email": self.author_email,
             "repository_id": str(self.repository_id),
         })
@@ -128,8 +139,8 @@ class File(BaseNode):
     current_hash: str = ""
     language: str = ""
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"File:{self.path}"
         src["document_metadata"].update({
             "path": self.path,
@@ -152,9 +163,10 @@ class Symbol(BaseNode):
     language: str = ""
     abi_version: int = 1
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Symbol:{self.name}"
+        src["document_metadata"]["defining_file_id"] = str(self.defining_file_id)
         return src
 
 
@@ -173,13 +185,14 @@ class PR(BaseNode):
     merged_at: Optional[datetime] = None
     repository_id: UUID = Field(default_factory=uuid4)
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"PR:#{self.number} {self.title[:60]}"
         src["description"] = self.description[:300]
         src["document_metadata"].update({
-            "pr_number": self.number,
+            "pr_number": str(self.number),
             "state": self.state,
+            "author_name": self.author_name,
             "repository_id": str(self.repository_id),
         })
         return src
@@ -200,6 +213,17 @@ class ReviewComment(BaseNode):
     body: str = ""
     in_reply_to: Optional[UUID] = None
 
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
+        src["title"] = f"ReviewComment:{self.author_name}:{str(self.id)[:8]}"
+        src["description"] = self.body[:200]
+        src["document_metadata"].update({
+            "pr_id": str(self.pr_id),
+            "file_id": str(self.file_id) if self.file_id else "",
+            "author_name": self.author_name,
+        })
+        return src
+
 
 # ---------------------------------------------------------------------------
 # Issue
@@ -216,10 +240,15 @@ class Issue(BaseNode):
     labels: list[str] = Field(default_factory=list)
     repository_id: UUID = Field(default_factory=uuid4)
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Issue:#{self.number} {self.title[:60]}"
         src["description"] = self.body[:300]
+        src["document_metadata"].update({
+            "issue_number": str(self.number),
+            "state": self.state,
+            "repository_id": str(self.repository_id),
+        })
         return src
 
 
@@ -238,8 +267,8 @@ class Decision(BaseNode):
     actor: str = ""  # e.g., "claude-code:backend"
     decision_id: str = ""  # human-readable Decision reference
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Decision:{self.decision_id or str(self.id)[:8]}"
         src["description"] = self.summary
         src["document_metadata"]["decision_id"] = self.decision_id
@@ -268,8 +297,8 @@ class Person(BaseNode):
     primary_email: str = ""
     current_employer: str = ""
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Person:{self.canonical_name}"
         src["document_metadata"]["primary_email"] = self.primary_email
         return src
@@ -283,6 +312,18 @@ class Identity(BaseNode):
     email: str = ""
     resolved: bool = False
     person_id: Optional[UUID] = None  # set after entity resolution
+
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
+        src["title"] = f"Identity:{self.username or self.email or str(self.id)[:8]}"
+        src["document_metadata"].update({
+            "platform": self.platform,
+            "username": self.username,
+            "email": self.email,
+            "resolved": self.resolved,
+            "person_id": str(self.person_id) if self.person_id else "",
+        })
+        return src
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +339,12 @@ class CostEvent(BaseNode):
     cost_usd: float = 0.0
     call_source: str = ""  # which synthesizer template triggered this
 
-    def to_hydra_source(self) -> dict[str, Any]:
-        src = super().to_hydra_source()
-        src["document_metadata"]["cost_usd"] = self.cost_usd
+    def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
+        src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
+        # HydraDB drops int/float metadata values (keeps only str/bool), so any
+        # number we need to read back MUST be stored as a string.
+        src["document_metadata"]["cost_usd"] = str(self.cost_usd)
         src["document_metadata"]["model"] = self.model
+        src["document_metadata"]["input_tokens"] = str(self.input_tokens)
+        src["document_metadata"]["output_tokens"] = str(self.output_tokens)
         return src

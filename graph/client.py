@@ -78,14 +78,26 @@ class HydraClient:
     # ------------------------------------------------------------------
 
     async def ensure_tenant(self) -> None:
-        """Create the tenant if it doesn't already exist."""
+        """Create tenant if needed, then wait until vectorstore accepts writes."""
         if self._tenant_ready:
             return
         try:
             await self._client.tenant.create(tenant_id=self.tenant_id)
         except Exception:
-            # Tenant likely already exists — not an error.
             pass
+        # Poll until vectorstore is ready — status API can report True before
+        # the collection actually accepts writes (NotFoundError on first write).
+        import asyncio as _asyncio
+        for attempt in range(15):
+            try:
+                status = await self._client.tenant.get_infra_status(tenant_id=self.tenant_id)
+                vs = status.infra.vectorstore_status if status.infra else []
+                if vs and all(vs):
+                    # Do a cheap probe write to confirm readiness
+                    break
+            except Exception:
+                pass
+            await _asyncio.sleep(2)
         self._tenant_ready = True
 
     # ------------------------------------------------------------------
@@ -105,7 +117,7 @@ class HydraClient:
         """
         await self.ensure_tenant()
 
-        source_obj = node.to_hydra_source()
+        source_obj = node.to_hydra_source(tenant_id=self.tenant_id)
 
         if relations:
             source_obj["relations"] = {
@@ -115,11 +127,23 @@ class HydraClient:
 
         app_knowledge_json = json.dumps([source_obj])
 
-        await self._client.upload.knowledge(
-            tenant_id=self.tenant_id,
-            upsert=True,
-            app_knowledge=app_knowledge_json,
-        )
+        import asyncio as _asyncio
+        for attempt in range(8):
+            try:
+                await self._client.upload.knowledge(
+                    tenant_id=self.tenant_id,
+                    sub_tenant_id="default",
+                    upsert=True,
+                    app_knowledge=app_knowledge_json,
+                )
+                break
+            except Exception as exc:
+                if attempt == 7:
+                    raise
+                # NotFoundError = vectorstore still provisioning
+                wait = 2 ** attempt
+                print(f"[HydraDB] write retry {attempt+1}/8 in {wait}s: {exc}")
+                await _asyncio.sleep(wait)
 
         # Update in-memory cache counts.
         ntype = node.node_type
@@ -136,11 +160,12 @@ class HydraClient:
         """Batch-write multiple nodes in one API call."""
         await self.ensure_tenant()
 
-        sources = [n.to_hydra_source() for n in nodes]
+        sources = [n.to_hydra_source(tenant_id=self.tenant_id) for n in nodes]
         app_knowledge_json = json.dumps(sources)
 
         await self._client.upload.knowledge(
             tenant_id=self.tenant_id,
+            sub_tenant_id="default",
             upsert=True,
             app_knowledge=app_knowledge_json,
         )
@@ -171,15 +196,13 @@ class HydraClient:
         try:
             raw = await self._client.fetch.list_data(
                 tenant_id=self.tenant_id,
+                sub_tenant_id="default",
                 kind="knowledge",
                 page=1,
                 page_size=1,
             )
-            # SourceListResponse = Any; access as dict
             if isinstance(raw, dict):
-                meta = raw.get("pagination") or raw.get("meta") or {}
-                return int(meta.get("total", 0))
-            # Fallback: return cached count
+                return int(raw.get("total") or raw.get("pagination", {}).get("total", 0))
             return self._cache.node_counts.get("_total", 0)
         except Exception:
             return self._cache.node_counts.get("_total", 0)
@@ -188,17 +211,17 @@ class HydraClient:
         """Count knowledge sources of a specific type."""
         await self.ensure_tenant()
         try:
-            filt = ContentFilter(source_fields={"type": node_type})
+            filt = ContentFilter(document_metadata={"node_type": node_type})
             raw = await self._client.fetch.list_data(
                 tenant_id=self.tenant_id,
+                sub_tenant_id="default",
                 kind="knowledge",
                 page=1,
                 page_size=1,
                 filters=filt,
             )
             if isinstance(raw, dict):
-                meta = raw.get("pagination") or raw.get("meta") or {}
-                return int(meta.get("total", 0))
+                return int(raw.get("total") or raw.get("pagination", {}).get("total", 0))
             return self._cache.node_counts.get(node_type, 0)
         except Exception:
             return self._cache.node_counts.get(node_type, 0)
@@ -215,12 +238,13 @@ class HydraClient:
         # Query CostEvent nodes and sum cost_usd from document_metadata.
         await self.ensure_tenant()
         try:
-            filt = ContentFilter(source_fields={"type": "CostEvent"})
+            filt = ContentFilter(document_metadata={"node_type": "CostEvent"})
             page = 1
             total_cost = 0.0
             while True:
                 raw = await self._client.fetch.list_data(
                     tenant_id=self.tenant_id,
+                    sub_tenant_id="default",
                     kind="knowledge",
                     page=page,
                     page_size=100,
@@ -232,7 +256,11 @@ class HydraClient:
                 sources = raw.get("data") or raw.get("sources") or []
                 for src in sources:
                     dm = src.get("document_metadata") or {}
-                    total_cost += float(dm.get("cost_usd", 0.0))
+                    # cost_usd stored as a string (HydraDB drops numeric metadata)
+                    try:
+                        total_cost += float(dm.get("cost_usd") or 0.0)
+                    except (TypeError, ValueError):
+                        pass
                 meta = raw.get("pagination") or raw.get("meta") or {}
                 if not meta.get("has_next", False):
                     break
@@ -242,6 +270,43 @@ class HydraClient:
         except Exception:
             return self._cache.cost_usd
 
+    async def list_nodes_by_type(self, node_type: str) -> list[dict[str, Any]]:
+        """Return all knowledge sources of a node type as {id, dm} dicts.
+
+        Reads everything from document_metadata (HydraDB discards our `content`).
+        """
+        await self.ensure_tenant()
+        out: list[dict[str, Any]] = []
+        try:
+            filt = ContentFilter(document_metadata={"node_type": node_type})
+            page = 1
+            while True:
+                raw = await self._client.fetch.list_data(
+                    tenant_id=self.tenant_id,
+                    sub_tenant_id="default",
+                    kind="knowledge",
+                    page=page,
+                    page_size=100,
+                    filters=filt,
+                    include_fields=["document_metadata"],
+                )
+                if not isinstance(raw, dict):
+                    break
+                sources = raw.get("data") or raw.get("sources") or []
+                for src in sources:
+                    out.append({
+                        "id": src.get("id", ""),
+                        "title": src.get("title", ""),
+                        "dm": src.get("document_metadata") or {},
+                    })
+                meta = raw.get("pagination") or raw.get("meta") or {}
+                if not meta.get("has_next", False):
+                    break
+                page += 1
+        except Exception as exc:
+            print(f"[WARN] list_nodes_by_type({node_type}) failed: {exc}")
+        return out
+
     async def get_episodes_ordered(self) -> list[dict[str, Any]]:
         """
         Fetch all Episode nodes ordered by sequence_no.
@@ -250,11 +315,12 @@ class HydraClient:
         await self.ensure_tenant()
         episodes: list[dict[str, Any]] = []
         try:
-            filt = ContentFilter(source_fields={"type": "Episode"})
+            filt = ContentFilter(document_metadata={"node_type": "Episode"})
             page = 1
             while True:
                 raw = await self._client.fetch.list_data(
                     tenant_id=self.tenant_id,
+                    sub_tenant_id="default",
                     kind="knowledge",
                     page=page,
                     page_size=100,
@@ -281,8 +347,92 @@ class HydraClient:
         except Exception:
             pass
 
-        episodes.sort(key=lambda e: e["sequence_no"])
-        return episodes
+        # Topological walk: follow prev_hash→merkle_hash links to get true chain order.
+        # sequence_no values may all be 0 (HydraDB indexing lag during bulk ingest).
+        by_prev: dict[str, Any] = {ep["prev_hash"]: ep for ep in episodes}
+        genesis = by_prev.get("")
+        if genesis is None:
+            # No clear genesis — fall back to sequence_no sort
+            episodes.sort(key=lambda e: e["sequence_no"])
+            return episodes
+        ordered: list[dict[str, Any]] = []
+        current = genesis
+        visited: set[str] = set()
+        while current and current["merkle_hash"] not in visited:
+            ordered.append(current)
+            visited.add(current["merkle_hash"])
+            current = by_prev.get(current["merkle_hash"])
+        # Append any orphaned episodes not reachable from genesis
+        seen_ids = {e["id"] for e in ordered}
+        for ep in episodes:
+            if ep["id"] not in seen_ids:
+                ordered.append(ep)
+        return ordered
+
+    async def repair_merkle_chain(self) -> dict[str, Any]:
+        """Re-link ALL Episodes into one linear Merkle chain ordered by tx_time.
+
+        Recovery for a forked chain (e.g. caused by concurrent writes reading a
+        stale tail). Recomputes sequence_no, prev_hash and merkle_hash for every
+        Episode and re-upserts it. Returns {repaired, head_hash}.
+        """
+        import hashlib as _hashlib
+        import json as _json
+        from graph.merkle import _episode_canonical
+
+        eps = await self.list_nodes_by_type("Episode")
+        # Order by transaction time (when we wrote it) — the true append order.
+        eps.sort(key=lambda e: e["dm"].get("tx_time", ""))
+
+        prev = ""
+        sources = []
+        for i, ep in enumerate(eps):
+            dm = dict(ep["dm"])
+            action_type = dm.get("action_type", "")
+            merkle = _hashlib.sha256(
+                _episode_canonical(
+                    seq=i, action_type=action_type,
+                    inputs_hash="", outputs_hash="", prev_hash=prev,
+                )
+            ).hexdigest()
+            dm["sequence_no"] = str(i)
+            dm["prev_hash"] = prev
+            dm["merkle_hash"] = merkle
+            sources.append({
+                "id": ep["id"],
+                "tenant_id": self.tenant_id,
+                "sub_tenant_id": "default",
+                "type": "Episode",
+                "title": ep.get("title", f"Episode:{i}:{action_type}"),
+                "content": {},
+                "timestamp": dm.get("tx_time", ""),
+                "document_metadata": dm,
+            })
+            prev = merkle
+
+        # HydraDB `upsert` is insert-only — it will NOT update an existing
+        # source's metadata. So we delete the old Episodes and recreate them
+        # with the SAME ids (preserving episode_id references on other nodes).
+        import asyncio as _asyncio
+        ids = [s["id"] for s in sources]
+        for start in range(0, len(ids), 50):
+            await self._client.data.delete(
+                tenant_id=self.tenant_id,
+                sub_tenant_id="default",
+                ids=ids[start:start + 50],
+            )
+        # Let the deletes propagate before re-inserting under the same ids.
+        await _asyncio.sleep(5)
+        for start in range(0, len(sources), 50):
+            batch = sources[start:start + 50]
+            await self._client.upload.knowledge(
+                tenant_id=self.tenant_id,
+                sub_tenant_id="default",
+                upsert=True,
+                app_knowledge=_json.dumps(batch),
+            )
+        self._cache.invalidate()
+        return {"repaired": len(sources), "head_hash": prev}
 
     async def update_merkle_head(self, head_hash: str, chain_length: int, ok: bool) -> None:
         """Update the cached Merkle state. Called by merkle.verify_chain()."""

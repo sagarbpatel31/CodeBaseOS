@@ -19,6 +19,10 @@
         "title": "CodebaseOS: Why is this here?"
       },
       {
+        "command": "codebaseos.compare",
+        "title": "CodebaseOS: Compare (with vs without HydraDB)"
+      },
+      {
         "command": "codebaseos.fiveWhys",
         "title": "CodebaseOS: Five Whys"
       },
@@ -52,6 +56,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show '🧬 Why?' code lens above function definitions"
+        },
+        "codebaseos.repo": {
+          "type": "string",
+          "default": "",
+          "description": "Repository (owner/name) to scope provenance queries, e.g. tokio-rs/tokio. Leave empty to search across all ingested repos."
         }
       }
     },
@@ -59,6 +68,10 @@
       "editor/context": [
         {
           "command": "codebaseos.why",
+          "group": "navigation"
+        },
+        {
+          "command": "codebaseos.compare",
           "group": "navigation"
         }
       ]

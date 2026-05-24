@@ -12,68 +12,341 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar = new StatusBar(client, context);
   statusBar.start();
 
-  // Hover provider: shows symbol/file/line with stub message until backend is live
+  // Hover provider: does NOT call the LLM (hover fires on every mouse move —
+  // auto-calling /why would blow the cost cap). Instead it offers a command
+  // link the user clicks to run the synthesis on demand.
   const hoverProvider = vscode.languages.registerHoverProvider(
     { scheme: 'file' },
     {
       provideHover(document, position) {
-        const wordRange = document.getWordRangeAtPosition(position);
-        if (!wordRange) return undefined;
-        const symbol = document.getText(wordRange);
-        const file = document.fileName;
         const line = position.line + 1;
+        const rel = vscode.workspace.asRelativePath(document.uri, false);
+        const args = encodeURIComponent(JSON.stringify({ file: rel, line }));
         const md = new vscode.MarkdownString(
-          `**${symbol}** at \`${file}:${line}\` — backend not yet implemented`
+          `$(history) **CodebaseOS** — [Why does this line exist?](command:codebaseos.why?${args})\n\n` +
+            `$(versions) [Compare: with vs without HydraDB](command:codebaseos.compare?${args})\n\n` +
+            `\`${rel}:${line}\``
         );
         md.isTrusted = true;
-        return new vscode.Hover(md, wordRange);
+        md.supportThemeIcons = true;
+        return new vscode.Hover(md);
       },
     }
   );
   context.subscriptions.push(hoverProvider);
 
-  // Command: codebaseos.why — stub until Phase 2 webview is wired
-  const whyCommand = vscode.commands.registerCommand('codebaseos.why', async () => {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Why.');
-      return;
-    }
-    const position = editor.selection.active;
-    const wordRange = editor.document.getWordRangeAtPosition(position);
-    const symbol = wordRange ? editor.document.getText(wordRange) : '(unknown)';
-    const file = editor.document.fileName;
-    const line = position.line + 1;
+  // Command: codebaseos.why — call /why and render provenance in a webview.
+  const whyCommand = vscode.commands.registerCommand(
+    'codebaseos.why',
+    async (arg?: { file: string; line: number }) => {
+      const editor = vscode.window.activeTextEditor;
+      let file = arg?.file;
+      let line = arg?.line;
+      if ((!file || !line) && editor) {
+        file = vscode.workspace.asRelativePath(editor.document.uri, false);
+        line = editor.selection.active.line + 1;
+      }
+      if (!file || !line) {
+        void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Why.');
+        return;
+      }
 
-    try {
-      const result = await client.why(file, line, symbol);
-      void vscode.window.showInformationMessage(
-        `Why: ${JSON.stringify(result).slice(0, 200)}`
-      );
-    } catch (_err) {
-      void vscode.window.showInformationMessage(
-        `**${symbol}** at \`${file}:${line}\` — backend not yet implemented`
+      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: explaining ${file}:${line}…` },
+        async () => {
+          try {
+            const result = await client.why(file!, line!, repo);
+            showWhyPanel(context, result);
+          } catch (err) {
+            void vscode.window.showErrorMessage(
+              `CodebaseOS /why failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
       );
     }
-  });
+  );
   context.subscriptions.push(whyCommand);
 
-  // Stubs for other commands (Phase 4)
-  context.subscriptions.push(
-    vscode.commands.registerCommand('codebaseos.fiveWhys', () => {
-      void vscode.window.showInformationMessage('CodebaseOS: Five Whys — coming in Phase 4');
-    })
+  // Command: codebaseos.compare — run /why (with graph) and /baseline-rag
+  // (without graph) side by side to show the value of HydraDB provenance.
+  const compareCommand = vscode.commands.registerCommand(
+    'codebaseos.compare',
+    async (arg?: { file: string; line: number }) => {
+      const editor = vscode.window.activeTextEditor;
+      let file = arg?.file;
+      let line = arg?.line;
+      if ((!file || !line) && editor) {
+        file = vscode.workspace.asRelativePath(editor.document.uri, false);
+        line = editor.selection.active.line + 1;
+      }
+      if (!file || !line) {
+        void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Compare.');
+        return;
+      }
+      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: comparing graph vs baseline for ${file}:${line}…` },
+        async () => {
+          try {
+            const [withGraph, baseline] = await Promise.all([
+              client.why(file!, line!, repo),
+              client.baselineRag(file!, line!, repo),
+            ]);
+            showComparePanel(context, withGraph, baseline);
+          } catch (err) {
+            void vscode.window.showErrorMessage(
+              `CodebaseOS compare failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      );
+    }
   );
-  context.subscriptions.push(
-    vscode.commands.registerCommand('codebaseos.counterfactual', () => {
-      void vscode.window.showInformationMessage('CodebaseOS: Counterfactual — coming in Phase 4');
-    })
+  context.subscriptions.push(compareCommand);
+
+  // Command: codebaseos.fiveWhys — recursive root-cause chain.
+  const fiveWhysCommand = vscode.commands.registerCommand(
+    'codebaseos.fiveWhys',
+    async (arg?: { file: string; line: number }) => {
+      const editor = vscode.window.activeTextEditor;
+      let file = arg?.file;
+      let line = arg?.line;
+      if ((!file || !line) && editor) {
+        file = vscode.workspace.asRelativePath(editor.document.uri, false);
+        line = editor.selection.active.line + 1;
+      }
+      if (!file || !line) {
+        void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Five Whys.');
+        return;
+      }
+      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: tracing root cause for ${file}:${line}…` },
+        async () => {
+          try {
+            const result = await client.fiveWhys(file!, line!, repo);
+            showFiveWhysPanel(context, result);
+          } catch (err) {
+            void vscode.window.showErrorMessage(
+              `CodebaseOS Five Whys failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      );
+    }
   );
+  context.subscriptions.push(fiveWhysCommand);
+
+  // Command: codebaseos.counterfactual — "what if reversed?" reasoning.
+  const counterfactualCommand = vscode.commands.registerCommand(
+    'codebaseos.counterfactual',
+    async () => {
+      const decision = await vscode.window.showInputBox({
+        prompt: 'CodebaseOS: describe the decision or change to reverse',
+        placeHolder: 'e.g. reverting the create_dir_all fix that succeeds when the path exists',
+      });
+      if (!decision) return;
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'CodebaseOS: reasoning about counterfactual…' },
+        async () => {
+          try {
+            const result = await client.counterfactual(decision);
+            showCounterfactualPanel(context, result);
+          } catch (err) {
+            void vscode.window.showErrorMessage(
+              `CodebaseOS Counterfactual failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      );
+    }
+  );
+  context.subscriptions.push(counterfactualCommand);
   context.subscriptions.push(
     vscode.commands.registerCommand('codebaseos.handoff', () => {
       void vscode.window.showInformationMessage('CodebaseOS: Handoff — coming in Phase 6');
     })
   );
+}
+
+let whyPanel: vscode.WebviewPanel | undefined;
+
+function showWhyPanel(
+  context: vscode.ExtensionContext,
+  result: import('./client').WhyResponse
+): void {
+  if (!whyPanel) {
+    whyPanel = vscode.window.createWebviewPanel(
+      'codebaseosWhy',
+      'CodebaseOS — Why',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    whyPanel.onDidDispose(() => (whyPanel = undefined), null, context.subscriptions);
+  }
+  const esc = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  whyPanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  .loc { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 12px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 18px 0 6px; }
+  .explanation { font-size: 14px; line-height: 1.6; }
+  .meta { margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 12px; color: var(--vscode-descriptionForeground); display: flex; gap: 18px; }
+  .badge { color: var(--vscode-charts-green); }
+</style></head>
+<body>
+  <div class="loc">${esc(result.file)}:${result.line}</div>
+  <h2>Why does this code exist?</h2>
+  <div class="explanation">${esc(result.explanation)}</div>
+  <div class="meta">
+    <span>context nodes: <span class="badge">${result.context_nodes}</span></span>
+    <span>cost: <span class="badge">$${result.cost_usd.toFixed(6)}</span></span>
+  </div>
+</body></html>`;
+  whyPanel.reveal(vscode.ViewColumn.Beside);
+}
+
+let comparePanel: vscode.WebviewPanel | undefined;
+
+function showComparePanel(
+  context: vscode.ExtensionContext,
+  withGraph: import('./client').WhyResponse,
+  baseline: import('./client').WhyResponse
+): void {
+  if (!comparePanel) {
+    comparePanel = vscode.window.createWebviewPanel(
+      'codebaseosCompare',
+      'CodebaseOS — With vs Without HydraDB',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    comparePanel.onDidDispose(() => (comparePanel = undefined), null, context.subscriptions);
+  }
+  const esc = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  comparePanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  .loc { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 12px; margin-bottom: 14px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .card { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 14px 16px; }
+  .card.graph { border-color: var(--vscode-charts-green); }
+  .card.base { border-color: var(--vscode-charts-red); }
+  h3 { margin: 0 0 4px; font-size: 13px; }
+  .graph h3 { color: var(--vscode-charts-green); }
+  .base h3 { color: var(--vscode-charts-red); }
+  .sub { font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 10px; }
+  .body { font-size: 13px; line-height: 1.55; }
+  .meta { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); }
+</style></head>
+<body>
+  <div class="loc">${esc(withGraph.file)}:${withGraph.line}</div>
+  <div class="cols">
+    <div class="card graph">
+      <h3>With HydraDB</h3>
+      <div class="sub">graph recall + Merkle provenance</div>
+      <div class="body">${esc(withGraph.explanation)}</div>
+      <div class="meta">context nodes: ${withGraph.context_nodes} · cost: $${withGraph.cost_usd.toFixed(6)}</div>
+    </div>
+    <div class="card base">
+      <h3>Without HydraDB</h3>
+      <div class="sub">plain LLM, no graph, no provenance</div>
+      <div class="body">${esc(baseline.explanation)}</div>
+      <div class="meta">context nodes: ${baseline.context_nodes} · cost: $${baseline.cost_usd.toFixed(6)}</div>
+    </div>
+  </div>
+</body></html>`;
+  comparePanel.reveal(vscode.ViewColumn.Beside);
+}
+
+const _esc = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+let fiveWhysPanel: vscode.WebviewPanel | undefined;
+
+function showFiveWhysPanel(
+  context: vscode.ExtensionContext,
+  result: import('./client').FiveWhysResponse
+): void {
+  if (!fiveWhysPanel) {
+    fiveWhysPanel = vscode.window.createWebviewPanel(
+      'codebaseosFiveWhys',
+      'CodebaseOS — Five Whys',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    fiveWhysPanel.onDidDispose(() => (fiveWhysPanel = undefined), null, context.subscriptions);
+  }
+  const steps = result.chain
+    .map(
+      (s) => `
+      <div class="step">
+        <div class="num">${s.level}</div>
+        <div class="qa">
+          <div class="q">${_esc(s.question)}</div>
+          <div class="a">${_esc(s.answer)}</div>
+        </div>
+      </div>`
+    )
+    .join('');
+  fiveWhysPanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  .loc { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 12px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 16px 0 12px; }
+  .step { display: flex; gap: 12px; margin-bottom: 14px; }
+  .num { flex: 0 0 26px; height: 26px; border-radius: 50%; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+  .qa { border-left: 2px solid var(--vscode-panel-border); padding-left: 12px; }
+  .q { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  .a { font-size: 13px; line-height: 1.5; color: var(--vscode-descriptionForeground); }
+  .meta { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); }
+</style></head>
+<body>
+  <div class="loc">${_esc(result.file)}:${result.line}</div>
+  <h2>5 Whys — root cause</h2>
+  ${steps || '<p>No causal chain returned.</p>'}
+  <div class="meta">context nodes: ${result.context_nodes} · cost: $${result.cost_usd.toFixed(6)}</div>
+</body></html>`;
+  fiveWhysPanel.reveal(vscode.ViewColumn.Beside);
+}
+
+let counterfactualPanel: vscode.WebviewPanel | undefined;
+
+function showCounterfactualPanel(
+  context: vscode.ExtensionContext,
+  result: import('./client').CounterfactualResponse
+): void {
+  if (!counterfactualPanel) {
+    counterfactualPanel = vscode.window.createWebviewPanel(
+      'codebaseosCounterfactual',
+      'CodebaseOS — Counterfactual',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    counterfactualPanel.onDidDispose(() => (counterfactualPanel = undefined), null, context.subscriptions);
+  }
+  counterfactualPanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 0 0 6px; }
+  .decision { font-size: 13px; font-style: italic; color: var(--vscode-textLink-foreground); margin-bottom: 14px; }
+  .analysis { font-size: 14px; line-height: 1.6; }
+  .meta { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); }
+</style></head>
+<body>
+  <h2>Counterfactual — what if reversed?</h2>
+  <div class="decision">“${_esc(result.decision)}”</div>
+  <div class="analysis">${_esc(result.analysis)}</div>
+  <div class="meta">context nodes: ${result.context_nodes} · cost: $${result.cost_usd.toFixed(6)}</div>
+</body></html>`;
+  counterfactualPanel.reveal(vscode.ViewColumn.Beside);
 }
 
 export function deactivate(): void {

@@ -35,6 +35,9 @@ dev = [
 [project.scripts]
 cbos = "cli:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["backend", "graph", "ingester", "cli"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

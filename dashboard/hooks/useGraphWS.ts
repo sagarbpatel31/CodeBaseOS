@@ -21,7 +21,9 @@ export interface GraphData {
   links: GraphLink[];
 }
 
-const WS_URL = "ws://localhost:8765";
+const WS_URL = typeof window !== "undefined"
+  ? `ws://${window.location.hostname}:8000/ws`
+  : "ws://localhost:8000/ws";
 const RECONNECT_MS = 3000;
 
 export function useGraphWS() {
