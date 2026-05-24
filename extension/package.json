@@ -1,0 +1,74 @@
+{
+  "name": "codebaseos",
+  "displayName": "CodebaseOS",
+  "description": "Right-click any line. Ask why. Get the real answer.",
+  "version": "0.0.1",
+  "publisher": "codebaseos",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["provenance", "history", "why", "graph", "HydraDB"],
+  "icon": "images/icon.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codebaseos.why",
+        "title": "CodebaseOS: Why is this here?"
+      },
+      {
+        "command": "codebaseos.fiveWhys",
+        "title": "CodebaseOS: Five Whys"
+      },
+      {
+        "command": "codebaseos.counterfactual",
+        "title": "CodebaseOS: Counterfactual"
+      },
+      {
+        "command": "codebaseos.handoff",
+        "title": "CodebaseOS: Generate onboarding tour for current module"
+      }
+    ],
+    "configuration": {
+      "title": "CodebaseOS",
+      "properties": {
+        "codebaseos.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "URL of the CodebaseOS backend"
+        },
+        "codebaseos.enableCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show '🧬 Why?' code lens above function definitions"
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codebaseos.why",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "@vscode/vsce": "^2.26.0",
+    "typescript": "^5.4.0"
+  }
+}

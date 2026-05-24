@@ -7,9 +7,10 @@
 
 ## Current phase
 
-**Phase 0 — Setup**
+**Phase 0 — Setup** ✅ COMPLETE → ready for Phase 1
 
-Started: (timestamp when Phase 0 begins)
+Started: 2026-05-23 21:12 PDT
+Completed: 2026-05-23 21:15 PDT
 Target completion: hour 1
 
 ---
@@ -103,7 +104,7 @@ Pending merges awaiting human approval: 0
 
 Format: `[severity] [lane] description (workaround if known)`
 
-(none)
+- [medium] [all] HydraDB SDK not yet installed — need to confirm SDK package name from HydraDB docs/Discord before Phase 1 Lane B begins. Add to pyproject.toml once confirmed.
 
 ---
 
