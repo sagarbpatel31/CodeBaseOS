@@ -7,7 +7,7 @@
 
 ## Current phase
 
-**Phase 1 — Spikes** 🟡 IN PROGRESS
+**Phase 1 — Spikes** ✅ ALL LANES DONE
 
 Phase 0 completed: 2026-05-23 21:15 PDT
 Phase 1 started: 2026-05-23 21:25 PDT
@@ -15,7 +15,7 @@ Target completion: hour 3
 
 Lane B (Backend): ✅ bi-temporal schema + Merkle + /status DONE
 Lane E (Extension): ✅ scaffold + status bar + hover stub DONE
-Lane D (Dashboard): 🔄 in progress
+Lane D (Dashboard): ✅ live force graph + layout DONE
 
 ---
 
@@ -25,7 +25,7 @@ Lane D (Dashboard): 🔄 in progress
 |---|---|---|---|
 | Backend (B)   | wip/backend   | graph+ingester: bi-temporal schema + merkle + /status | 2026-05-23 21:45 PDT |
 | Extension (E) | wip/extension | extension/scaffold: hover + status bar + client stub | 2026-05-23 21:25 PDT |
-| Dashboard (D) | wip/dashboard | (none yet) | — |
+| Dashboard (D) | wip/dashboard | dash/scaffold: live force graph + layout | 2026-05-23 21:30 PDT |
 
 ---
 

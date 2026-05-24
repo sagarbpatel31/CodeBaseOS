@@ -30,7 +30,7 @@ extension-pack:
 
 # Start the dashboard dev server
 dash:
-	@echo "TODO: implement — cd dashboard && npm run dev"
+	cd dashboard && npm run dev
 
 # Clean DB, start everything, ingest Tokio
 demo-cold:
