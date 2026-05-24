@@ -26,9 +26,8 @@ Target completion: hour 1
 
 ## Cross-lane changes pending
 
-Format: `[timestamp] [originating lane] description → affected files in other lanes`
 
-(none)
+- [Phase 1] Backend (Lane B) must serve `GET /status` returning `{costSpent, costCap, nodeCount, repoCount, merkleOk, merkleHead}`. Spec: docs/status-bar-contract.md §"Backend contract". Required for Lane E status bar.
 
 ---
 
