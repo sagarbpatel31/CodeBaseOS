@@ -3,7 +3,7 @@
   "displayName": "CodebaseOS",
   "description": "Right-click any line. Ask why. Get the real answer.",
   "version": "0.0.1",
-  "publisher": "codebaseos",
+  "publisher": "CodeBaseOS",
   "engines": {
     "vscode": "^1.85.0"
   },
