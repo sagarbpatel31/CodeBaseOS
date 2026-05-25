@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+from graph import chain as chainstate
 from graph.client import HydraClient
 from graph.merkle import MerkleResult, evaluate_chain, verify_chain
 from synthesizer.synthesizer import (
@@ -975,55 +976,17 @@ def _record_event(kind: str, title: str, **extra) -> dict:
 # HydraDB indexing lag means a tail read right after a write is stale, which
 # forks the chain. So we read the tip ONCE (from a settled read) and then only
 # ever advance it in memory — every backend episode write goes through here.
-_chain_tip: dict | None = None
-_chain_lock_init = False
-
-
-async def _ensure_chain_tip() -> dict:
-    """Initialize the in-memory chain tip from a STABLE (settled) DB read, once."""
-    global _chain_tip
-    if _chain_tip is not None:
-        return _chain_tip
-    import asyncio as _aio
-    prev_len = -1
-    eps: list = []
-    for _ in range(8):
-        eps = await _db.get_episodes_ordered()
-        if len(eps) == prev_len:
-            break  # length stabilized → indexing settled
-        prev_len = len(eps)
-        await _aio.sleep(1.5)
-    _chain_tip = {
-        "prev_hash": eps[-1]["merkle_hash"] if eps else "",
-        "seq": len(eps),
-    }
-    return _chain_tip
-
-
 class _ChainBuilder:
-    """Appends Episodes using the authoritative in-memory tip, so concurrent or
-    back-to-back ingest calls never fork the chain on stale tail reads."""
+    """Appends Episodes via the authoritative local chain pointer
+    (graph/chain.py): each slot is claimed under a file lock with the merkle
+    hash computed locally, so HydraDB indexing lag can never fork the chain —
+    and the CLI shares the same pointer file."""
 
     async def init(self) -> None:
-        await _ensure_chain_tip()
+        await chainstate.ensure_bootstrapped(_db)
 
     async def next(self, action_type: str):
-        from uuid import uuid4
-
-        from graph.bitemporal import make_node, utc_now
-        from graph.merkle import extend_chain
-        from graph.schema import Episode
-        tip = await _ensure_chain_tip()
-        ep = make_node(
-            Episode, episode_id=uuid4(), source="github",
-            sequence_no=tip["seq"], action_type=action_type, valid_time=utc_now(),
-        )
-        ep = extend_chain(ep, prev_hash=tip["prev_hash"])
-        await _db.write_node(ep)
-        # Advance the authoritative tip in memory.
-        tip["prev_hash"] = ep.merkle_hash
-        tip["seq"] += 1
-        return ep
+        return await chainstate.next_episode(_db, action_type)
 
 
 async def _ingest_live(owner: str, repo: str, kind: str, count: int) -> list[dict]:
@@ -1093,13 +1056,17 @@ async def events(limit: int = 50):
 
 
 @app.post("/chain/resync")
-async def chain_resync():
-    """Reset the in-memory Merkle tip so it re-reads from HydraDB. Call after
-    external ingestion (e.g. the `cbos` CLI) so backend writes chain correctly."""
-    global _chain_tip
-    _chain_tip = None
-    tip = await _ensure_chain_tip()
-    return {"seq": tip["seq"], "prev_hash": tip["prev_hash"]}
+async def chain_resync(rebuild: bool = False):
+    """Re-bootstrap the local chain pointer from HydraDB.
+
+    The CLI and backend share the pointer file, so a resync is normally
+    unnecessary. Pass rebuild=true to discard the pointer and reseed it from a
+    settled HydraDB read (e.g. after manually editing the store)."""
+    if rebuild:
+        chainstate.reset()
+    if _db is not None:
+        await chainstate.ensure_bootstrapped(_db)
+    return {"ok": True}
 
 
 @app.post("/webhook/simulate")

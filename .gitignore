@@ -51,3 +51,4 @@ target/
 
 # HydraDB credentials
 hydradb.key
+.chain_state.json

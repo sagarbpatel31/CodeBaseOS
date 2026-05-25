@@ -116,13 +116,23 @@ the other as BROKEN.
 This bites whenever the tail is re-read mid-batch or between back-to-back API
 calls (e.g. the webhook firehose firing several events quickly).
 
-**Fix (backend, `_chain_tip`):** read the tail **once** from a *settled* read
-(poll `get_episodes_ordered` until its length stops changing → indexing caught
-up), cache `{prev_hash, seq}` in memory, then only ever **advance it in
-memory**. Every backend episode write goes through this single authoritative
-tip; nothing re-queries the tail mid-flight. `POST /chain/resync` resets it
-after external ingestion (e.g. the `cbos` CLI writes episodes the backend
-didn't make). The CLI itself already chains in-memory within a single run.
+**Earlier (insufficient) fix:** an in-memory tip per process + a settled tail
+read. This still forked across *separate* processes (CLI vs backend) and even
+between back-to-back CLI runs, because any read of the lagging store can miss
+just-written episodes.
+
+**Definitive fix (`graph/chain.py`):** stop reading the tail from HydraDB
+entirely. Keep the authoritative tail (`{seq, head_hash}`) in a local
+**lock-protected JSON file** (`.chain_state.json`). `chain.reserve()` claims the
+next slot under an `fcntl` exclusive lock and computes the new `merkle_hash`
+**locally** (`extend_chain`) *before* the DB write — so two writers can never
+share a `prev_hash`. HydraDB becomes pure storage, never consulted for ordering.
+The file is bootstrapped once from a settled read if absent (so an existing
+chain is picked up). CLI and backend both call `chain.next_episode(db, action)`,
+sharing the one pointer. Result: `cbos verify` stays ✓ across multi-repo CLI
+ingests *and* live backend firehose ingestion. (`POST /chain/resync?rebuild=1`
+reseeds the pointer if ever needed.) Single-host assumption; for multi-host,
+move the pointer to a store with atomic compare-and-set.
 
 ### Deleting sources
 `client.data.delete(tenant_id, ids, sub_tenant_id)` removes sources by id.

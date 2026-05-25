@@ -19,10 +19,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from graph import chain
 from graph.bitemporal import make_node, utc_now
 from graph.client import HydraClient
-from graph.merkle import extend_chain, verify_chain
-from graph.schema import Decision, Episode
+from graph.merkle import verify_chain
+from graph.schema import Decision
 
 
 def _get_db() -> HydraClient:
@@ -66,22 +67,11 @@ def decide(summary: str, rationale: str, actor: str, supersedes: str, confidence
         db = _get_db()
         await db.ensure_tenant()
 
-        # Create Episode for this decision
-        prev_hash, seq = await db.get_chain_tail_settled()
-
-        ep = make_node(
-            Episode,
-            episode_id=uuid4(),
-            source="manual",
-            sequence_no=seq,
-            action_type="decide",
-            valid_time=utc_now(),
-        )
-        ep = extend_chain(ep, prev_hash=prev_hash)
-        await db.write_node(ep)
+        # Create Episode for this decision via the authoritative chain pointer.
+        ep = await chain.next_episode(db, "decide", source="manual")
 
         # Create Decision node
-        decision_id = f"D{seq:04d}"
+        decision_id = f"D{ep.sequence_no:04d}"
         decision = make_node(
             Decision,
             episode_id=ep.id,
@@ -221,34 +211,14 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
 
             total = len(commits_meta)
 
-            # --- Fetch chain tail from a SETTLED read (indexing lag from a
-            #     prior ingest would otherwise hand us a stale tail and fork
-            #     the chain at the boundary between two `cbos ingest` runs). ---
-            prev_hash, seq = await db.get_chain_tail_settled()
-
-            # --- Ensure repository node (use a synthetic episode id for the
-            #     edge; the ingester stores it as a foreign-key reference only)
-            # We create the first real episode up-front so ensure_repository
-            # has a valid episode id.
-            first_commit_entry = commits_meta[0]
-            first_sha = first_commit_entry["sha"] if isinstance(first_commit_entry, dict) and "sha" in first_commit_entry else first_commit_entry
-
-            ep0 = make_node(
-                Episode,
-                episode_id=uuid4(),
-                source="github",
-                sequence_no=seq,
-                action_type="ingest_commit",
-                valid_time=utc_now(),
-            )
-            ep0 = extend_chain(ep0, prev_hash=prev_hash)
-            await db.write_node(ep0)
-
+            # Episodes are linked via the authoritative local chain pointer
+            # (graph/chain.py): each slot is claimed under a file lock with the
+            # merkle hash computed locally, so HydraDB indexing lag can't fork
+            # the chain. The first episode also anchors the Repository node.
+            ep0 = await chain.next_episode(db, "ingest_commit")
             repo_node, _repo_sid = await ingester.ensure_repository(owner, repo_name, ep0.id)
 
             # --- Ingest loop ---
-            episodes_created = [ep0]
-
             for idx, commit_entry in enumerate(commits_meta):
                 if isinstance(commit_entry, dict):
                     target_sha = commit_entry["sha"]
@@ -264,24 +234,9 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
                     author_raw = "unknown"
                     msg_short = ""
 
-                # Reuse ep0 for the first commit (already written); create new
-                # episodes for subsequent commits.
-                if idx == 0:
-                    ep = ep0
-                else:
-                    prev_hash = episodes_created[-1].merkle_hash
-                    seq_cur = seq + idx
-                    ep = make_node(
-                        Episode,
-                        episode_id=uuid4(),
-                        source="github",
-                        sequence_no=seq_cur,
-                        action_type="ingest_commit",
-                        valid_time=utc_now(),
-                    )
-                    ep = extend_chain(ep, prev_hash=prev_hash)
-                    await db.write_node(ep)
-                    episodes_created.append(ep)
+                # Reuse ep0 for the first commit (already created); claim a new
+                # chain slot for each subsequent commit.
+                ep = ep0 if idx == 0 else await chain.next_episode(db, "ingest_commit")
 
                 # Progress line shown before ingestion
                 progress_label = f"[{idx + 1}/{total}] Commit: {target_sha[:12]} by {author_raw}"
@@ -300,15 +255,7 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
                 click.echo(f"\nPRs: fetching {prs} most-recently-updated…")
                 pr_list = await ingester.get_pulls(owner, repo_name, prs)
                 for pr_data in pr_list[:prs]:
-                    prev_hash = episodes_created[-1].merkle_hash
-                    ep = make_node(
-                        Episode, episode_id=uuid4(), source="github",
-                        sequence_no=seq + len(episodes_created),
-                        action_type="ingest_pr", valid_time=utc_now(),
-                    )
-                    ep = extend_chain(ep, prev_hash=prev_hash)
-                    await db.write_node(ep)
-                    episodes_created.append(ep)
+                    ep = await chain.next_episode(db, "ingest_pr")
                     r = await ingester.ingest_pr(owner, repo_name, pr_data, repo_node.id, ep)
                     click.echo(f"  PR #{r['number']} [{r['state']}] by {r['author']} — {r['title']} ({r['review_count']} reviews)")
 
@@ -323,15 +270,7 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
                     # The issues endpoint also returns PRs — skip those.
                     if "pull_request" in issue_data:
                         continue
-                    prev_hash = episodes_created[-1].merkle_hash
-                    ep = make_node(
-                        Episode, episode_id=uuid4(), source="github",
-                        sequence_no=seq + len(episodes_created),
-                        action_type="ingest_issue", valid_time=utc_now(),
-                    )
-                    ep = extend_chain(ep, prev_hash=prev_hash)
-                    await db.write_node(ep)
-                    episodes_created.append(ep)
+                    ep = await chain.next_episode(db, "ingest_issue")
                     r = await ingester.ingest_issue(issue_data, repo_node.id, ep)
                     click.echo(f"  Issue #{r['number']} [{r['state']}] by {r['author']} — {r['title']}")
                     count += 1
