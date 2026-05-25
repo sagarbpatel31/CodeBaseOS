@@ -67,9 +67,7 @@ def decide(summary: str, rationale: str, actor: str, supersedes: str, confidence
         await db.ensure_tenant()
 
         # Create Episode for this decision
-        episodes = await db.get_episodes_ordered()
-        prev_hash = episodes[-1]["merkle_hash"] if episodes else ""
-        seq = len(episodes)
+        prev_hash, seq = await db.get_chain_tail_settled()
 
         ep = make_node(
             Episode,
@@ -223,10 +221,10 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
 
             total = len(commits_meta)
 
-            # --- Fetch current chain tail once before the loop ---
-            episodes = await db.get_episodes_ordered()
-            prev_hash = episodes[-1]["merkle_hash"] if episodes else ""
-            seq = len(episodes)
+            # --- Fetch chain tail from a SETTLED read (indexing lag from a
+            #     prior ingest would otherwise hand us a stale tail and fork
+            #     the chain at the boundary between two `cbos ingest` runs). ---
+            prev_hash, seq = await db.get_chain_tail_settled()
 
             # --- Ensure repository node (use a synthetic episode id for the
             #     edge; the ingester stores it as a foreign-key reference only)

@@ -270,6 +270,25 @@ class HydraClient:
         except Exception:
             return self._cache.cost_usd
 
+    async def get_chain_tail_settled(self, tries: int = 8, delay: float = 1.5) -> tuple[str, int]:
+        """Return (prev_hash, seq) for the Merkle tail from a SETTLED read.
+
+        HydraDB indexing lags writes, so a tail read right after a prior ingest
+        can miss the latest episodes — chaining from that stale tail forks the
+        chain. Poll get_episodes_ordered until its length stops changing
+        (indexing caught up), then return the true tail.
+        """
+        import asyncio as _a
+        prev_len = -1
+        eps: list[dict[str, Any]] = []
+        for _ in range(tries):
+            eps = await self.get_episodes_ordered()
+            if len(eps) == prev_len:
+                break
+            prev_len = len(eps)
+            await _a.sleep(delay)
+        return (eps[-1]["merkle_hash"] if eps else ""), len(eps)
+
     async def list_nodes_by_type(self, node_type: str) -> list[dict[str, Any]]:
         """Return all knowledge sources of a node type as {id, dm} dicts.
 
