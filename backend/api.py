@@ -654,9 +654,49 @@ async def summary(file: str, line: int, symbol: str = ""):
     raise _not_yet(2)
 
 
-@app.post("/search-nl")
-async def search_nl(q: str):
-    raise _not_yet(4)
+@app.get("/search-nl")
+async def search_nl(q: str, limit: int = 12):
+    """
+    Natural-language search over the knowledge graph. Pure HydraDB semantic
+    recall — no LLM call, so it's free and fast. Returns ranked matching nodes
+    (id, type, title, snippet, score) the dashboard can list and highlight.
+    """
+    if _db is None:
+        return {"query": q, "results": []}
+    limit = max(1, min(limit, 50))
+    try:
+        recall_result = await _db._client.recall.full_recall(
+            tenant_id=_db.tenant_id,
+            sub_tenant_id="default",
+            query=q,
+            max_results=limit,
+            graph_context=True,
+        )
+        results: list[dict] = []
+        sources = getattr(recall_result, "sources", None) or []
+        for src in sources[:limit]:
+            am = getattr(src, "additional_metadata", {}) or {}
+            results.append({
+                "id": getattr(src, "id", "") or getattr(src, "source_id", ""),
+                "nodeType": am.get("node_type", ""),
+                "title": getattr(src, "title", "") or "",
+                "score": round(float(getattr(src, "score", 0.0) or 0.0), 4),
+            })
+        # Fall back to chunk content for snippets when sources are thin.
+        chunks = getattr(recall_result, "chunks", None) or []
+        for chunk in chunks[: max(0, limit - len(results))]:
+            content = getattr(chunk, "chunk_content", "") or ""
+            if content:
+                results.append({
+                    "id": getattr(chunk, "source_id", ""),
+                    "nodeType": "chunk",
+                    "title": content[:80],
+                    "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+                })
+        return {"query": q, "count": len(results), "results": results}
+    except Exception as exc:
+        print(f"[WARN] search_nl failed: {exc}")
+        return {"query": q, "results": []}
 
 
 @app.get("/counterfactual")

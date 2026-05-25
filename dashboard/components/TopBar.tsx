@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SearchBar } from "@/components/SearchBar";
 
 interface StatusData {
   costSpent: number;
@@ -41,10 +42,11 @@ export function TopBar() {
 
   return (
     <header className="flex items-center justify-between bg-gray-900 border-b border-gray-700 px-4 py-2 text-sm font-mono shrink-0">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <span className="text-purple-400 font-bold">CodebaseOS</span>
         <span className="text-gray-600">|</span>
         <span className="text-gray-400">Observability</span>
+        <SearchBar />
       </div>
 
       <div className="flex items-center gap-6">
