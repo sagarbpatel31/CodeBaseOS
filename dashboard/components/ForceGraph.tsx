@@ -26,7 +26,8 @@ export function ForceGraph({ graphData, onNodeClick, dangerIds }: ForceGraphProp
   const nodeCanvasObject = useCallback(
     (node: NodeWithPos, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.label ?? node.id;
-      const fontSize = Math.max(8, 12 / globalScale);
+      // Clamp so labels never balloon at low zoom (avoids giant smeared text).
+      const fontSize = Math.min(13, Math.max(7, 10 / globalScale));
       const danger = dangerIds?.has(node.id) ?? false;
       const r = danger ? 8 : node.superseded ? 4 : 6;
       const color = danger ? DANGER_COLOR : nodeColor(node.nodeType ?? "");
@@ -46,7 +47,10 @@ export function ForceGraph({ graphData, onNodeClick, dangerIds }: ForceGraphProp
         ctx.stroke();
       }
 
-      if (globalScale > 0.8) {
+      // Only label when zoomed in (or always for hub nodes), keeping the
+      // overview clean and preventing overlapping-label blobs.
+      const isHub = (node.val ?? 5) >= 10;
+      if (globalScale > 1.6 || (isHub && globalScale > 0.6)) {
         ctx.font = `${fontSize}px monospace`;
         ctx.fillStyle = color;
         ctx.textAlign = "center";

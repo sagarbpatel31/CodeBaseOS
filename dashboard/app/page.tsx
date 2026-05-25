@@ -17,11 +17,13 @@ export default function Home() {
   const { graphData, timeRange } = useGraphData(asOf);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-screen w-screen overflow-hidden">
       <TopBar />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         <LeftRail />
-        <div className="relative flex-1 flex">
+        {/* min-w-0 lets the canvas column shrink instead of pushing the
+            right rail off-screen (flexbox min-width:auto trap). */}
+        <div className="relative flex-1 flex min-w-0 overflow-hidden">
           <ForceGraph graphData={graphData} onNodeClick={setSelected} dangerIds={dangerIds} />
           <ChaosPanel onHighlightChange={(ids) => setDangerIds(new Set(ids))} />
           <NodePanel node={selected} repo="" onClose={() => setSelected(null)} />
