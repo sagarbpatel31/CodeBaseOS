@@ -4,4 +4,3 @@ Multi-source ingestion: GitHub API (commits, PRs, issues, reviews), local git mi
 
 **Key modules (Phase 1+):** `github.py`, `git_local.py`, `slack.py` (optional)
 
-Lane B owns this directory.

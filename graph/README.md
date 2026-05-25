@@ -4,4 +4,3 @@ HydraDB client, bi-temporal schema models (Pydantic), Merkle chain implementatio
 
 **Key modules (Phase 1):** `client.py`, `schema.py`, `merkle.py`, `bitemporal.py`
 
-Lane B owns this directory.

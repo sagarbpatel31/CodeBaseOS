@@ -6,4 +6,3 @@ The ONLY OpenAI caller in the entire project. Single chokepoint for cost control
 
 **Forbidden:** calling OpenAI from any other module. No exceptions.
 
-Lane B owns this directory.
