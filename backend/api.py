@@ -619,6 +619,31 @@ def _artifact_url(repo: str, node_type: str, text: str) -> str:
     return ""
 
 
+async def _find_file_node(file: str) -> tuple[str, str]:
+    """Resolve an editor-relative path to a stored File node, robustly across
+    folder layouts (monorepos store e.g. 'pkg/src/x.rs' while the editor sees
+    'src/x.rs'). Returns (node_id, stored_path) or ("", "").
+
+    Match preference: exact → one path is a suffix of the other → same basename.
+    """
+    target = file.strip().lstrip("./")
+    base = target.rsplit("/", 1)[-1]
+    exact = suffix = basename = None
+    for f in await _db.list_nodes_by_type("File"):
+        path = f["dm"].get("path", "") or f.get("title", "").replace("File:", "")
+        if not path:
+            continue
+        if path == target:
+            exact = (f["id"], path)
+            break
+        if suffix is None and (path.endswith("/" + target) or target.endswith("/" + path)):
+            suffix = (f["id"], path)
+        if basename is None and path.rsplit("/", 1)[-1] == base:
+            basename = (f["id"], path)
+    hit = exact or suffix or basename
+    return hit if hit else ("", "")
+
+
 async def _recall_context(query: str, max_results: int = 8) -> tuple[str, int, list[dict]]:
     """Semantic recall from HydraDB → (context_string, node_count, sources).
 
@@ -790,15 +815,9 @@ async def provenance(file: str, line: int = 1, repo: str = ""):
         raise HTTPException(status_code=503, detail="HydraDB not connected")
     import json as _json
 
-    # 1. Locate the File node (for real, cited graph edges).
+    # 1. Locate the File node (robust path match for any folder layout).
     verified_edges: list[dict] = []
-    files = await _db.list_nodes_by_type("File")
-    fid = ""
-    for f in files:
-        path = f["dm"].get("path", "") or f.get("title", "").replace("File:", "")
-        if path == file or path.endswith(file) or f.get("title", "").endswith(file):
-            fid = f["id"]
-            break
+    fid, _matched = await _find_file_node(file)
     if fid:
         neigh = await _db.graph_neighbors(fid, limit=20)
         # Keep the most-confident, human-readable extracted relationships.
@@ -921,6 +940,54 @@ async def decisions(repo: str = ""):
             "url": url,
         })
     return {"count": len(out), "decisions": out}
+
+
+@app.get("/related")
+async def related(q: str, exclude: str = "", limit: int = 8):
+    """Semantically related nodes via HydraDB vector recall — embedding
+    similarity (not graph edges), spanning ALL ingested repos. Showcases
+    HydraDB's recall engine; results can be cross-repo."""
+    if _db is None:
+        return {"query": q, "results": []}
+    try:
+        recall = await _db._client.recall.full_recall(
+            tenant_id=_db.tenant_id,
+            sub_tenant_id="default",
+            query=q,
+            max_results=limit + 4,
+            graph_context=False,
+        )
+        out: list[dict] = []
+        seen: set[str] = set()
+        for s in (getattr(recall, "sources", None) or []):
+            sid = getattr(s, "id", "") or getattr(s, "source_id", "")
+            if not sid or sid == exclude or sid in seen:
+                continue
+            seen.add(sid)
+            am = getattr(s, "additional_metadata", {}) or {}
+            out.append({
+                "id": sid,
+                "nodeType": am.get("node_type", ""),
+                "title": getattr(s, "title", "") or "",
+            })
+            if len(out) >= limit:
+                break
+        return {"query": q, "results": out}
+    except Exception as exc:
+        print(f"[WARN] /related failed: {exc}")
+        return {"query": q, "results": []}
+
+
+@app.get("/inferred")
+async def inferred(id: str, limit: int = 15):
+    """HydraDB's OWN auto-extracted relationships for a node — predicate +
+    human-readable context + confidence. The graph HydraDB built from raw
+    content, not the edges we wrote."""
+    if _db is None:
+        return {"id": id, "relations": []}
+    rels = await _db.graph_neighbors(id, limit=limit)
+    rels.sort(key=lambda r: r.get("confidence", 0.0), reverse=True)
+    return {"id": id, "relations": rels[:limit]}
 
 
 @app.get("/ask")

@@ -48,6 +48,16 @@ interface DiffChange {
   title: string;
   when: string;
 }
+interface RelatedItem {
+  id: string;
+  nodeType: string;
+  title: string;
+}
+interface InferredRel {
+  predicate: string;
+  context: string;
+  confidence: number;
+}
 
 const HOP_COLOR: Record<string, string> = {
   Commit: "text-blue-400",
@@ -73,6 +83,8 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
   const [prov, setProv] = useState<ProvResult | null>(null);
   const [explain, setExplain] = useState<ExplainResult | null>(null);
   const [diff, setDiff] = useState<DiffChange[] | null>(null);
+  const [related, setRelated] = useState<RelatedItem[] | null>(null);
+  const [inferred, setInferred] = useState<InferredRel[] | null>(null);
   const [busy, setBusy] = useState<string>(""); // which action is loading
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -91,6 +103,8 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
     setProv(null);
     setExplain(null);
     setDiff(null);
+    setRelated(null);
+    setInferred(null);
     setErr("");
     setCopied(false);
     if (!node || node.nodeType !== "File") return;
@@ -131,6 +145,35 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
       /* ignore */
     }
     setBusy("");
+  }
+
+  async function loadRelated() {
+    if (!node) return;
+    setBusy("related");
+    try {
+      const p = new URLSearchParams({ q: file, exclude: node.id, limit: "8" });
+      const res = await fetch(`/api/backend/related?${p}`);
+      if (res.ok) setRelated((await res.json()).results ?? []);
+    } catch {
+      /* ignore */
+    }
+    setBusy("");
+  }
+
+  async function loadInferred() {
+    if (!node) return;
+    setBusy("inferred");
+    try {
+      const res = await fetch(`/api/backend/inferred?id=${encodeURIComponent(node.id)}`);
+      if (res.ok) setInferred((await res.json()).relations ?? []);
+    } catch {
+      /* ignore */
+    }
+    setBusy("");
+  }
+
+  function focusNode(id: string, title: string, nodeType: string) {
+    window.dispatchEvent(new CustomEvent("cbos-focus", { detail: { id, nodeType, title } }));
   }
 
   function copyMarkdown() {
@@ -189,6 +232,16 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
             </button>
             <button onClick={copyMarkdown} disabled={!why && !prov} className={btn}>
               {copied ? "copied ✓" : "copy ↗"}
+            </button>
+          </div>
+          <div className="flex gap-1 mb-3">
+            <button onClick={loadRelated} disabled={busy === "related"} className={btn}
+                    title="Semantically similar nodes via HydraDB recall">
+              {busy === "related" ? "…" : "related"}
+            </button>
+            <button onClick={loadInferred} disabled={busy === "inferred"} className={btn}
+                    title="HydraDB's own auto-extracted relationships">
+              {busy === "inferred" ? "…" : "inferred by HydraDB"}
             </button>
           </div>
 
@@ -277,6 +330,49 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
                   <li key={i} className="text-gray-400">✓ {e.context} <span className="text-gray-600">({e.confidence})</span></li>
                 ))}
               </ul>
+            </>
+          )}
+
+          {related && (
+            <>
+              <SectionLabel text="Semantically related (HydraDB recall)" color="text-purple-400/80" />
+              {related.length === 0 ? (
+                <div className="text-gray-600">No similar nodes.</div>
+              ) : (
+                <ul className="space-y-1">
+                  {related.map((r, i) => (
+                    <li key={i}>
+                      <button
+                        onClick={() => focusNode(r.id, r.title, r.nodeType)}
+                        className="text-left hover:underline"
+                      >
+                        <span className={`uppercase text-[10px] mr-1 ${HOP_COLOR[r.nodeType] ?? "text-gray-400"}`}>
+                          {r.nodeType}
+                        </span>
+                        <span className="text-gray-300">{r.title}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+
+          {inferred && (
+            <>
+              <SectionLabel text="Inferred by HydraDB" color="text-green-500/80" />
+              {inferred.length === 0 ? (
+                <div className="text-gray-600">No inferred relations.</div>
+              ) : (
+                <ul className="space-y-1">
+                  {inferred.map((r, i) => (
+                    <li key={i} className="text-gray-400">
+                      <span className="text-cyan-400">{r.predicate}</span> — {r.context}{" "}
+                      <span className="text-gray-600">({r.confidence})</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
 
