@@ -211,19 +211,33 @@ async def status() -> StatusResponse:
     return resp
 
 
+_graph_cache: dict[str, tuple[dict, float]] = {}
+_GRAPH_TTL = 3.0
+
+
+def _invalidate_graph_cache() -> None:
+    _graph_cache.clear()
+
+
 @app.get("/graph")
 async def graph(as_of: str = ""):
     """Return all graph nodes + links for the dashboard force graph.
 
-    Optional `as_of` (ISO-8601) returns a bi-temporal snapshot: only nodes
-    whose valid_time <= as_of and that were not yet superseded at as_of.
-    Always returns `timeRange: {min, max}` so the UI can build a slider.
+    Optional `as_of` (ISO-8601) returns a bi-temporal snapshot. Cached for a few
+    seconds so the dashboard's 5s poll doesn't re-paginate the whole store each
+    time (kept the UI laggy). Cache is cleared on any ingest/chaos mutation.
     """
     if _db is None:
         if _offline is not None:
             return _offline.graph_snapshot(as_of or None)
         return {"nodes": [], "links": [], "timeRange": {"min": "", "max": ""}}
-    return await _fetch_graph_snapshot(_db, as_of=as_of or None)
+    key = as_of or "live"
+    hit = _graph_cache.get(key)
+    if hit and time.monotonic() < hit[1]:
+        return hit[0]
+    snap = await _fetch_graph_snapshot(_db, as_of=as_of or None)
+    _graph_cache[key] = (snap, time.monotonic() + _GRAPH_TTL)
+    return snap
 
 
 async def _gather_status(db: HydraClient):
@@ -732,6 +746,7 @@ async def resolve_persons():
         await _ws_manager.broadcast(await _fetch_graph_snapshot(_db))
     except Exception:
         pass
+    _invalidate_graph_cache()
     return {"persons_created": created}
 
 
@@ -816,6 +831,7 @@ async def extract_decisions(repo: str = "", limit: int = 5):
         await _ws_manager.broadcast(await _fetch_graph_snapshot(_db))
     except Exception:
         pass
+    _invalidate_graph_cache()
     return {"created": len(created), "decisions": created}
 
 
@@ -1553,6 +1569,7 @@ def _record_event(kind: str, title: str, **extra) -> dict:
         **extra,
     }
     _firehose.appendleft(evt)
+    _invalidate_graph_cache()  # new nodes → next /graph poll recomputes
     return evt
 
 

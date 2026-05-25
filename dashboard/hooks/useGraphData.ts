@@ -49,7 +49,27 @@ export function useGraphData(asOf: string | null) {
         if (res.ok) {
           const data = await res.json();
           if (cancelled) return;
-          setGraphData({ nodes: data.nodes ?? [], links: data.links ?? [] });
+          const incoming: GraphData = { nodes: data.nodes ?? [], links: data.links ?? [] };
+          // Time-travel = a distinct snapshot → replace. Live poll → MERGE,
+          // reusing existing node objects so the force layout (their x/y) stays
+          // put instead of re-simulating from scratch every 5s.
+          setGraphData((prev) => {
+            if (asOf) return incoming;
+            const byId = new Map(prev.nodes.map((n) => [n.id, n]));
+            const nodes = incoming.nodes.map((n) => {
+              const old = byId.get(n.id);
+              if (old) {
+                old.label = n.label;
+                old.nodeType = n.nodeType;
+                old.val = n.val;
+                return old; // keeps x/y from the running simulation
+              }
+              return n;
+            });
+            // Reuse the already-resolved link objects when the set is unchanged.
+            const links = prev.links.length === incoming.links.length ? prev.links : incoming.links;
+            return { nodes, links };
+          });
           if (data.timeRange) setTimeRange(data.timeRange);
         }
       } catch {
