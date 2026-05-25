@@ -45,6 +45,7 @@ from graph.merkle import (
 )
 from graph.resolve import resolve_identities
 from graph.schema import (
+    PR,
     Commit,
     CostEvent,
     Decision,
@@ -54,7 +55,6 @@ from graph.schema import (
     Identity,
     Issue,
     Person,
-    PR,
     Repository,
     ReviewComment,
     Symbol,

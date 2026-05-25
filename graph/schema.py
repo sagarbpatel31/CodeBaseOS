@@ -8,7 +8,7 @@ Universal properties (§5.1) on every node:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ class BaseNode(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     tx_time: datetime
     valid_time: datetime
-    valid_time_end: Optional[datetime] = None
+    valid_time_end: datetime | None = None
     source: str  # "github", "git_local", "manual", etc.
     episode_id: UUID
     merkle_hash: str = ""
@@ -82,7 +82,7 @@ class Episode(BaseNode):
 class Repository(BaseNode):
     node_type: str = "Repository"
     name: str  # "owner/repo"
-    github_id: Optional[int] = None
+    github_id: int | None = None
     default_branch: str = "main"
     language_breakdown: dict[str, float] = Field(default_factory=dict)
 
@@ -106,7 +106,7 @@ class Commit(BaseNode):
     node_type: str = "Commit"
     sha: str
     message: str
-    author_id: Optional[UUID] = None  # Person reference (set after entity resolution)
+    author_id: UUID | None = None  # Person reference (set after entity resolution)
     author_name: str = ""  # raw name before resolution
     author_email: str = ""
     parents: list[str] = Field(default_factory=list)  # parent SHAs
@@ -180,9 +180,9 @@ class PR(BaseNode):
     title: str
     description: str = ""
     state: str = "open"  # "open", "merged", "closed"
-    author_id: Optional[UUID] = None
+    author_id: UUID | None = None
     author_name: str = ""
-    merged_at: Optional[datetime] = None
+    merged_at: datetime | None = None
     repository_id: UUID = Field(default_factory=uuid4)
 
     def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
@@ -205,13 +205,13 @@ class PR(BaseNode):
 class ReviewComment(BaseNode):
     node_type: str = "ReviewComment"
     pr_id: UUID
-    file_id: Optional[UUID] = None
+    file_id: UUID | None = None
     line_start: int = 0
     line_end: int = 0
-    author_id: Optional[UUID] = None
+    author_id: UUID | None = None
     author_name: str = ""
     body: str = ""
-    in_reply_to: Optional[UUID] = None
+    in_reply_to: UUID | None = None
 
     def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
         src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
@@ -235,7 +235,7 @@ class Issue(BaseNode):
     title: str
     body: str = ""
     state: str = "open"
-    author_id: Optional[UUID] = None
+    author_id: UUID | None = None
     author_name: str = ""
     labels: list[str] = Field(default_factory=list)
     repository_id: UUID = Field(default_factory=uuid4)
@@ -262,7 +262,7 @@ class Decision(BaseNode):
     rationale: str = ""
     alternatives_rejected: list[str] = Field(default_factory=list)
     confidence: str = "medium"  # "low", "medium", "high"
-    made_by_id: Optional[UUID] = None
+    made_by_id: UUID | None = None
     made_by_name: str = ""
     actor: str = ""  # e.g., "claude-code:backend"
     decision_id: str = ""  # human-readable Decision reference
@@ -315,7 +315,7 @@ class Identity(BaseNode):
     username: str = ""
     email: str = ""
     resolved: bool = False
-    person_id: Optional[UUID] = None  # set after entity resolution
+    person_id: UUID | None = None  # set after entity resolution
 
     def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
         src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)

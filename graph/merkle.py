@@ -42,7 +42,7 @@ def _episode_canonical(seq: int, action_type: str, inputs_hash: str, outputs_has
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
-def compute_episode_hash(episode: "Episode") -> str:
+def compute_episode_hash(episode: Episode) -> str:
     """Compute the Merkle hash for an Episode (does not mutate the episode)."""
     data = _episode_canonical(
         seq=episode.sequence_no,
@@ -54,7 +54,7 @@ def compute_episode_hash(episode: "Episode") -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def extend_chain(episode: "Episode", prev_hash: str = "") -> "Episode":
+def extend_chain(episode: Episode, prev_hash: str = "") -> Episode:
     """
     Attach the episode to the chain.
     Sets episode.prev_hash and episode.merkle_hash.
@@ -89,7 +89,7 @@ def evaluate_chain(episodes: list[dict]) -> MerkleResult:
     return MerkleResult(ok=True, head_hash=head_hash, chain_length=len(episodes))
 
 
-async def verify_chain(db: "HydraClient") -> MerkleResult:
+async def verify_chain(db: HydraClient) -> MerkleResult:
     """
     Walk all Episodes from HydraDB in chain order and check prev_hash linkage.
     Caches the result on the client for fast /status reads.

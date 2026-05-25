@@ -13,8 +13,8 @@ this layer in Python. Workaround documented in docs/hydradb-notes.md.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional, Type, TypeVar
+from datetime import UTC, datetime
+from typing import TypeVar
 from uuid import UUID
 
 from graph.schema import BaseNode
@@ -23,15 +23,15 @@ N = TypeVar("N", bound=BaseNode)
 
 
 def utc_now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def make_node(
-    node_class: Type[N],
+    node_class: type[N],
     episode_id: UUID,
     source: str,
-    valid_time: Optional[datetime] = None,
-    valid_time_end: Optional[datetime] = None,
+    valid_time: datetime | None = None,
+    valid_time_end: datetime | None = None,
     **kwargs,
 ) -> N:
     """

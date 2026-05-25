@@ -15,8 +15,11 @@ import pytest
 pytest.importorskip("hydra_db")
 
 # Offline mode must be set before importing the app (read at import time).
+# Use "" (not pop): load_dotenv(override=False) would refill a popped key from
+# a local .env, reconnecting the live backend and breaking offline assertions.
 os.environ["CBOS_OFFLINE_DEMO"] = "1"
-os.environ.pop("HYDRADB_API_KEY", None)
+os.environ["HYDRADB_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 

@@ -16,9 +16,9 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
-from hydra_db import AsyncHydraDB, ContentFilter, MemoryItem
+from hydra_db import AsyncHydraDB, ContentFilter
 
 from graph.schema import BaseNode, CostEvent
 
@@ -53,7 +53,7 @@ class HydraClient:
     def __init__(
         self,
         api_key: str,
-        endpoint: Optional[str] = None,
+        endpoint: str | None = None,
         tenant_id: str = DEFAULT_TENANT,
     ) -> None:
         kwargs: dict[str, Any] = {"token": api_key}
@@ -65,7 +65,7 @@ class HydraClient:
         self._tenant_ready = False
 
     @classmethod
-    def from_env(cls) -> "HydraClient":
+    def from_env(cls) -> HydraClient:
         api_key = os.environ.get("HYDRADB_API_KEY", "")
         endpoint = os.environ.get("HYDRADB_ENDPOINT")
         tenant_id = os.environ.get("HYDRADB_TENANT_ID", cls.DEFAULT_TENANT)
@@ -107,7 +107,7 @@ class HydraClient:
     async def write_node(
         self,
         node: BaseNode,
-        relations: Optional[list[str]] = None,
+        relations: list[str] | None = None,
     ) -> str:
         """
         Persist a graph node to HydraDB as a knowledge source.
@@ -378,6 +378,7 @@ class HydraClient:
         """
         import hashlib as _hashlib
         import json as _json
+
         from graph.merkle import _episode_canonical
 
         eps = await self.list_nodes_by_type("Episode")

@@ -21,7 +21,7 @@ import os
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 # gpt-4o-mini pricing, USD per token.
@@ -87,11 +87,11 @@ class Synthesizer:
         self._db = db
         self._client: Any = None
         # (call_source, cache_key) -> (result, expires_at). OrderedDict gives LRU.
-        self._cache: "OrderedDict[tuple[str, str], tuple[SynthesisResult, float]]" = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str], tuple[SynthesisResult, float]] = OrderedDict()
         self._cache_ttl = cache_ttl_seconds
         self._cache_max = max(1, cache_max_entries)
 
-    def _cache_get(self, key: tuple[str, str]) -> Optional[SynthesisResult]:
+    def _cache_get(self, key: tuple[str, str]) -> SynthesisResult | None:
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -127,8 +127,8 @@ class Synthesizer:
         system: str,
         user: str,
         max_tokens: int = MAX_OUTPUT_TOKENS,
-        response_format: Optional[dict] = None,
-        cache_key: Optional[str] = None,
+        response_format: dict | None = None,
+        cache_key: str | None = None,
     ) -> SynthesisResult:
         """Run one bounded, budgeted, cached completion.
 

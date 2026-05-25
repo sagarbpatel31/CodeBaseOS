@@ -14,6 +14,7 @@ Requires:
 from __future__ import annotations
 
 import os
+from datetime import UTC
 from uuid import uuid4
 
 import pytest
@@ -24,10 +25,7 @@ from graph.schema import (
     Commit,
     Episode,
     File,
-    Identity,
-    Repository,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -81,12 +79,12 @@ def test_base_node_bitemporal_fields():
 
 def test_bitemporal_as_of_filtering():
     """as_of() filters nodes to those valid at a given point in time."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime
 
     ep_id = uuid4()
-    t0 = datetime(2023, 1, 1, tzinfo=timezone.utc)
-    t1 = datetime(2023, 6, 1, tzinfo=timezone.utc)
-    t2 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    t0 = datetime(2023, 1, 1, tzinfo=UTC)
+    t1 = datetime(2023, 6, 1, tzinfo=UTC)
+    t2 = datetime(2024, 1, 1, tzinfo=UTC)
 
     # File valid from t0 to t1
     old_file = make_node(
@@ -246,8 +244,8 @@ async def test_ingest_one_commit(db):
     Ingest one commit from a tiny public repo.
     Verifies Commit + File + Identity nodes created and Merkle chain extended.
     """
-    from ingester.github import GitHubIngester
     from graph.merkle import extend_chain
+    from ingester.github import GitHubIngester
 
     ingester = GitHubIngester.from_env(db)
     try:

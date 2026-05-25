@@ -12,13 +12,12 @@ from __future__ import annotations
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -35,17 +34,17 @@ from synthesizer.synthesizer import (
 # App-level state
 # ---------------------------------------------------------------------------
 
-_db: Optional[HydraClient] = None
+_db: HydraClient | None = None
 
 # The single OpenAI chokepoint (AGENTS.md invariant #8). Created in lifespan.
-_synth: Optional[Synthesizer] = None
+_synth: Synthesizer | None = None
 
 # Offline demo fixture (CBOS_OFFLINE_DEMO=1): serve a deterministic bundled graph
 # with no HydraDB/OpenAI credentials so the dashboard + chaos buttons render
 # anywhere. Only ever consulted when there is no live DB, so it cannot affect a
 # real, credentialed demo.
 _OFFLINE_DEMO = os.environ.get("CBOS_OFFLINE_DEMO", "").lower() in ("1", "true", "yes")
-_offline: Optional[Any] = None
+_offline: Any | None = None
 if _OFFLINE_DEMO:
     from backend.offline import OfflineStore
 
@@ -272,7 +271,7 @@ NODE_TYPE_SIZE = {
     "Identity": 6, "Episode": 3, "ReviewComment": 5, "Discussion": 7,
 }
 
-async def _fetch_graph_snapshot(db: HydraClient, as_of: Optional[str] = None) -> dict:
+async def _fetch_graph_snapshot(db: HydraClient, as_of: str | None = None) -> dict:
     """Pull all knowledge sources from HydraDB and shape them for the force graph.
 
     Builds links from node relationships:
@@ -622,9 +621,9 @@ async def resolve_persons():
     Person→Identity edges then render in the graph as cross-repo bridges."""
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
+    from graph.bitemporal import make_node
     from graph.resolve import resolve_identities
     from graph.schema import Person
-    from graph.bitemporal import make_node
 
     identities = await _db.list_nodes_by_type("Identity")
     clusters = resolve_identities(identities)["clusters"]
@@ -970,7 +969,7 @@ def _record_event(kind: str, title: str, **extra) -> dict:
 # HydraDB indexing lag means a tail read right after a write is stale, which
 # forks the chain. So we read the tip ONCE (from a settled read) and then only
 # ever advance it in memory — every backend episode write goes through here.
-_chain_tip: Optional[dict] = None
+_chain_tip: dict | None = None
 _chain_lock_init = False
 
 
@@ -1003,10 +1002,11 @@ class _ChainBuilder:
         await _ensure_chain_tip()
 
     async def next(self, action_type: str):
-        from graph.schema import Episode
+        from uuid import uuid4
+
         from graph.bitemporal import make_node, utc_now
         from graph.merkle import extend_chain
-        from uuid import uuid4
+        from graph.schema import Episode
         tip = await _ensure_chain_tip()
         ep = make_node(
             Episode, episode_id=uuid4(), source="github",

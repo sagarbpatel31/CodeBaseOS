@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -23,7 +23,7 @@ import httpx
 from graph.bitemporal import make_node, utc_now
 from graph.client import HydraClient
 from graph.merkle import extend_chain
-from graph.schema import Commit, Episode, File, Identity, Issue, PR, Repository, ReviewComment
+from graph.schema import PR, Commit, Episode, File, Identity, Issue, Repository, ReviewComment
 
 
 class GitHubIngester:
@@ -48,7 +48,7 @@ class GitHubIngester:
         )
 
     @classmethod
-    def from_env(cls, db: HydraClient) -> "GitHubIngester":
+    def from_env(cls, db: HydraClient) -> GitHubIngester:
         token = os.environ.get("GITHUB_TOKEN", "")
         if not token:
             raise RuntimeError("GITHUB_TOKEN not set")
@@ -61,7 +61,7 @@ class GitHubIngester:
     # Low-level GitHub API calls
     # ------------------------------------------------------------------
 
-    async def _get(self, path: str, params: Optional[dict] = None) -> Any:
+    async def _get(self, path: str, params: dict | None = None) -> Any:
         resp = await self._http.get(path, params=params)
         resp.raise_for_status()
         return resp.json()
@@ -242,7 +242,7 @@ class GitHubIngester:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_dt(value: Optional[str]) -> datetime:
+    def _parse_dt(value: str | None) -> datetime:
         if not value:
             return utc_now()
         return datetime.fromisoformat(value.replace("Z", "+00:00"))

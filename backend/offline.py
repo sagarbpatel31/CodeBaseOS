@@ -15,7 +15,6 @@ Design notes:
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Optional
 
 from graph.merkle import MerkleResult, _episode_canonical, evaluate_chain
 from graph.resolve import resolve_identities
@@ -113,7 +112,7 @@ class OfflineStore:
         ]
 
     # ------------------------------------------------------------------ graph
-    def graph_snapshot(self, as_of: Optional[str] = None) -> dict:
+    def graph_snapshot(self, as_of: str | None = None) -> dict:
         node_ids = {n[0] for n in self._nodes_raw}
         times = [n[4] for n in self._nodes_raw if n[4]] + [e["valid_time"] for e in self.episodes]
         t_min, t_max = (min(times), max(times)) if times else ("", "")
@@ -156,7 +155,7 @@ class OfflineStore:
         return {"nodes": nodes, "links": links, "timeRange": {"min": t_min, "max": t_max}}
 
     # ----------------------------------------------------------------- status
-    def verify(self, tamper: Optional[dict]) -> MerkleResult:
+    def verify(self, tamper: dict | None) -> MerkleResult:
         view = []
         for ep in self.episodes:
             ep = dict(ep)
@@ -165,7 +164,7 @@ class OfflineStore:
             view.append(ep)
         return evaluate_chain(view)
 
-    def status_metrics(self, tamper: Optional[dict]) -> dict:
+    def status_metrics(self, tamper: dict | None) -> dict:
         merkle = self.verify(tamper)
         node_count = len(self._nodes_raw) + len(self.episodes)
         return {

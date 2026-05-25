@@ -1,19 +1,19 @@
 from typing import Any
 
 from graph.schema import (
-    Episode,
-    Repository,
-    Commit,
-    File,
-    Symbol,
     PR,
-    ReviewComment,
-    Issue,
+    Commit,
+    CostEvent,
     Decision,
     Discussion,
-    Person,
+    Episode,
+    File,
     Identity,
-    CostEvent,
+    Issue,
+    Person,
+    Repository,
+    ReviewComment,
+    Symbol,
 )
 
 
