@@ -650,8 +650,52 @@ async def five_whys(file: str, line: int, repo: str = ""):
 
 
 @app.get("/summary")
-async def summary(file: str, line: int, symbol: str = ""):
-    raise _not_yet(2)
+async def summary(file: str, line: int, symbol: str = "", repo: str = ""):
+    """
+    Functional summary: WHAT the code at file:line (or `symbol`) does — distinct
+    from /why (provenance). Grounded in graph recall.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    await _check_budget()
+    import os
+    from openai import AsyncOpenAI
+
+    target = f"the symbol '{symbol}' in {file}" if symbol else f"{file} at line {line}"
+    scope = f"In repository {repo}, " if repo else ""
+    query = f"{scope}what does {target} do? Its purpose and behavior."
+    try:
+        context, ctx_count = await _recall_context(query, max_results=6)
+        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        chat = await oai.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=250,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are CodebaseOS. Summarize WHAT the referenced code does — its "
+                        "purpose and behavior — concisely (2-3 sentences). Use the knowledge "
+                        "graph context if helpful. Do not invent commit hashes."
+                    ),
+                },
+                {"role": "user", "content": f"Target: {query}\n\nContext:\n{context}"},
+            ],
+        )
+        summary_text = chat.choices[0].message.content or "No summary generated."
+        cost_usd = await _log_llm_cost(chat.usage, "summary")
+        return {
+            "file": file,
+            "line": line,
+            "symbol": symbol,
+            "summary": summary_text,
+            "context_nodes": ctx_count,
+            "cost_usd": round(cost_usd, 6),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/search-nl")
@@ -749,9 +793,68 @@ async def counterfactual(decision: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.post("/handoff")
-async def handoff(module: str):
-    raise _not_yet(6)
+@app.get("/handoff")
+async def handoff(module: str, repo: str = ""):
+    """
+    Generate an onboarding tour for a module/path: overview, key files, key
+    people, key decisions, and where to start. Grounded in HydraDB recall.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    await _check_budget()
+    import json as _json
+    import os
+    from openai import AsyncOpenAI
+
+    scope = f"in repository {repo}, " if repo else ""
+    query = (
+        f"{scope}everything about the module '{module}': its files, the commits and PRs that "
+        f"shaped it, the people who worked on it, and any decisions behind it."
+    )
+    try:
+        context, ctx_count = await _recall_context(query, max_results=14)
+        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        chat = await oai.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=700,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are CodebaseOS generating a developer ONBOARDING TOUR for a module, "
+                        "grounded in a codebase knowledge graph. Produce a concise, practical tour "
+                        "for someone new to this module. Cite real files/commits/PRs/people from the "
+                        "context; do not invent hashes. Respond as JSON: "
+                        '{"overview": "...", "start_here": "...", '
+                        '"key_files": ["..."], "key_people": ["..."], "key_decisions": ["..."]}'
+                    ),
+                },
+                {"role": "user", "content": f"Module: {module}\n\nKnowledge graph context:\n{context}"},
+            ],
+        )
+        raw = chat.choices[0].message.content or "{}"
+        try:
+            tour = _json.loads(raw)
+            if not isinstance(tour, dict):
+                tour = {}
+        except Exception:
+            tour = {}
+        cost_usd = await _log_llm_cost(chat.usage, "handoff")
+        return {
+            "module": module,
+            "overview": str(tour.get("overview", "")),
+            "start_here": str(tour.get("start_here", "")),
+            "key_files": [str(x) for x in (tour.get("key_files") or [])][:8],
+            "key_people": [str(x) for x in (tour.get("key_people") or [])][:8],
+            "key_decisions": [str(x) for x in (tour.get("key_decisions") or [])][:8],
+            "context_nodes": ctx_count,
+            "cost_usd": round(cost_usd, 6),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------

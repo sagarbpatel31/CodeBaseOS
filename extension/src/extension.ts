@@ -164,11 +164,34 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
   context.subscriptions.push(counterfactualCommand);
-  context.subscriptions.push(
-    vscode.commands.registerCommand('codebaseos.handoff', () => {
-      void vscode.window.showInformationMessage('CodebaseOS: Handoff — coming in Phase 6');
-    })
-  );
+  // Command: codebaseos.handoff — onboarding tour for a module.
+  const handoffCommand = vscode.commands.registerCommand('codebaseos.handoff', async () => {
+    const editor = vscode.window.activeTextEditor;
+    const suggested = editor
+      ? vscode.workspace.asRelativePath(editor.document.uri, false).split('/').slice(0, 3).join('/')
+      : '';
+    const moduleName = await vscode.window.showInputBox({
+      prompt: 'CodebaseOS: module/path to generate an onboarding tour for',
+      value: suggested,
+      placeHolder: 'e.g. tokio/src/fs',
+    });
+    if (!moduleName) return;
+    const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: building onboarding tour for ${moduleName}…` },
+      async () => {
+        try {
+          const result = await client.handoff(moduleName, repo);
+          showHandoffPanel(context, result);
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `CodebaseOS Handoff failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    );
+  });
+  context.subscriptions.push(handoffCommand);
 }
 
 let whyPanel: vscode.WebviewPanel | undefined;
@@ -347,6 +370,49 @@ function showCounterfactualPanel(
   <div class="meta">context nodes: ${result.context_nodes} · cost: $${result.cost_usd.toFixed(6)}</div>
 </body></html>`;
   counterfactualPanel.reveal(vscode.ViewColumn.Beside);
+}
+
+let handoffPanel: vscode.WebviewPanel | undefined;
+
+function showHandoffPanel(
+  context: vscode.ExtensionContext,
+  r: import('./client').HandoffResponse
+): void {
+  if (!handoffPanel) {
+    handoffPanel = vscode.window.createWebviewPanel(
+      'codebaseosHandoff',
+      'CodebaseOS — Onboarding Tour',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    handoffPanel.onDidDispose(() => (handoffPanel = undefined), null, context.subscriptions);
+  }
+  const list = (items: string[]): string =>
+    items.length ? `<ul>${items.map((x) => `<li>${_esc(x)}</li>`).join('')}</ul>` : '<p class="empty">—</p>';
+  handoffPanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  .mod { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 13px; margin-bottom: 12px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 18px 0 6px; }
+  .overview { font-size: 14px; line-height: 1.6; }
+  .start { font-size: 13px; line-height: 1.55; border-left: 2px solid var(--vscode-charts-green); padding-left: 10px; }
+  ul { margin: 4px 0; padding-left: 18px; }
+  li { font-size: 13px; line-height: 1.5; margin-bottom: 3px; }
+  .empty { color: var(--vscode-descriptionForeground); }
+  .meta { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); }
+</style></head>
+<body>
+  <div class="mod">📍 ${_esc(r.module)}</div>
+  <div class="overview">${_esc(r.overview)}</div>
+  <h2>Start here</h2>
+  <div class="start">${_esc(r.start_here)}</div>
+  <h2>Key files</h2>${list(r.key_files)}
+  <h2>Key people</h2>${list(r.key_people)}
+  <h2>Key decisions</h2>${list(r.key_decisions)}
+  <div class="meta">context nodes: ${r.context_nodes} · cost: $${r.cost_usd.toFixed(6)}</div>
+</body></html>`;
+  handoffPanel.reveal(vscode.ViewColumn.Beside);
 }
 
 export function deactivate(): void {

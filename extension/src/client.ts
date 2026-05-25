@@ -43,6 +43,17 @@ export interface CounterfactualResponse {
   cost_usd: number;
 }
 
+export interface HandoffResponse {
+  module: string;
+  overview: string;
+  start_here: string;
+  key_files: string[];
+  key_people: string[];
+  key_decisions: string[];
+  context_nodes: number;
+  cost_usd: number;
+}
+
 const MOCK_STATUS: StatusResponse = {
   costSpent: 0.0,
   costCap: 5.0,
@@ -127,6 +138,19 @@ export class CodebaseOSClient {
       throw new Error(`Counterfactual request failed: ${response.status}`);
     }
     return (await response.json()) as CounterfactualResponse;
+  }
+
+  async handoff(module: string, repo = ''): Promise<HandoffResponse> {
+    const params = new URLSearchParams({ module });
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/handoff?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Handoff request failed: ${response.status}`);
+    }
+    return (await response.json()) as HandoffResponse;
   }
 
   mockStatus(): StatusResponse {
