@@ -40,6 +40,17 @@ _db: Optional[HydraClient] = None
 # The single OpenAI chokepoint (AGENTS.md invariant #8). Created in lifespan.
 _synth: Optional[Synthesizer] = None
 
+# Offline demo fixture (CBOS_OFFLINE_DEMO=1): serve a deterministic bundled graph
+# with no HydraDB/OpenAI credentials so the dashboard + chaos buttons render
+# anywhere. Only ever consulted when there is no live DB, so it cannot affect a
+# real, credentialed demo.
+_OFFLINE_DEMO = os.environ.get("CBOS_OFFLINE_DEMO", "").lower() in ("1", "true", "yes")
+_offline: Optional[Any] = None
+if _OFFLINE_DEMO:
+    from backend.offline import OfflineStore
+
+    _offline = OfflineStore()
+
 # /status cache: refresh every 2s (shorter than 5s poll interval)
 _status_cache: dict[str, Any] = {}
 _status_expires: float = 0.0
@@ -155,15 +166,26 @@ async def status() -> StatusResponse:
         return StatusResponse(**_status_cache)
 
     if _db is None:
-        # Backend started without HydraDB credentials — return safe zeros.
-        resp = StatusResponse(
-            costSpent=0.0,
-            costCap=_COST_CAP_USD,
-            nodeCount=0,
-            repoCount=0,
-            merkleOk=True,
-            merkleHead="",
-        )
+        if _offline is not None:
+            m = _offline.status_metrics(_chaos.get("tamper"))
+            resp = StatusResponse(
+                costSpent=m["costSpent"],
+                costCap=_COST_CAP_USD,
+                nodeCount=m["nodeCount"],
+                repoCount=m["repoCount"],
+                merkleOk=m["merkleOk"],
+                merkleHead=m["merkleHead"],
+            )
+        else:
+            # Backend started without HydraDB credentials — return safe zeros.
+            resp = StatusResponse(
+                costSpent=0.0,
+                costCap=_COST_CAP_USD,
+                nodeCount=0,
+                repoCount=0,
+                merkleOk=True,
+                merkleHead="",
+            )
         _status_cache = resp.model_dump()
         _status_expires = now + _STATUS_TTL
         return resp
@@ -192,6 +214,8 @@ async def graph(as_of: str = ""):
     Always returns `timeRange: {min, max}` so the UI can build a slider.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.graph_snapshot(as_of or None)
         return {"nodes": [], "links": [], "timeRange": {"min": "", "max": ""}}
     return await _fetch_graph_snapshot(_db, as_of=as_of or None)
 
@@ -220,6 +244,8 @@ async def _merkle_state() -> MerkleResult:
     production verifier, not faked with a flag.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.verify(_chaos.get("tamper"))
         return MerkleResult(ok=True, head_hash="", chain_length=0)
     tamper = _chaos.get("tamper")
     if not tamper:
@@ -454,6 +480,8 @@ def _not_yet(phase: int = 2) -> HTTPException:
 async def list_repos():
     """List ingested Repository nodes for the dashboard left rail."""
     if _db is None:
+        if _offline is not None:
+            return _offline.repos()
         return {"repos": []}
     try:
         from hydra_db import ContentFilter
@@ -537,6 +565,8 @@ async def ingest_repo(repo: str, commits: int = 5, prs: int = 0, issues: int = 0
 async def er_queue():
     """Entity-resolution view: deterministic Identity→Person clusters + review queue."""
     if _db is None:
+        if _offline is not None:
+            return _offline.er_queue()
         return {"clusters": [], "pending": [], "stats": {"identities": 0, "people": 0, "auto_merged": 0, "pending": 0}}
     from graph.resolve import resolve_identities
     identities = await _db.list_nodes_by_type("Identity")
@@ -639,6 +669,8 @@ async def why(file: str, line: int, repo: str = ""):
     Uses HydraDB semantic recall + OpenAI to synthesize the answer.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.why(file, line)
         raise HTTPException(status_code=503, detail="HydraDB not connected")
 
     query = f"Why does the code in {file} at line {line} exist? What commits or decisions introduced it?"
@@ -738,6 +770,8 @@ async def summary(file: str, line: int, symbol: str = "", repo: str = ""):
     from /why (provenance). Grounded in graph recall.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.summary(file, line, symbol)
         raise HTTPException(status_code=503, detail="HydraDB not connected")
 
     target = f"the symbol '{symbol}' in {file}" if symbol else f"{file} at line {line}"
@@ -1041,6 +1075,8 @@ async def _ingest_live(owner: str, repo: str, kind: str, count: int) -> list[dic
 @app.get("/events")
 async def events(limit: int = 50):
     """Return recent firehose events (newest first) for the dashboard panel."""
+    if _db is None and _offline is not None and not _firehose:
+        return {"events": _offline.events()["events"][:limit]}
     return {"events": list(_firehose)[:limit]}
 
 
@@ -1140,7 +1176,7 @@ async def webhook(request: Request):
 
 @app.get("/verify")
 async def verify():
-    if _db is None:
+    if _db is None and _offline is None:
         return {"ok": True, "chain_length": 0, "head_hash": ""}
     result = await _merkle_state()
     return {
@@ -1172,6 +1208,16 @@ async def chaos_tamper():
     until /chaos/restore. One altered hash → tamper detected: that is the pitch.
     """
     if _db is None:
+        if _offline is not None:
+            _chaos["tamper"] = _offline.tamper_target()
+            _bust_status_cache()
+            result = await _merkle_state()
+            return {
+                "tampered": _chaos["tamper"],
+                "merkleOk": result.ok,
+                "broken_at": result.broken_at,
+                "chain_length": result.chain_length,
+            }
         raise HTTPException(status_code=503, detail="HydraDB not connected")
     episodes = await _db.get_episodes_ordered()
     if len(episodes) < 2:
@@ -1224,6 +1270,10 @@ async def chaos_nuclear(person: str = ""):
     If `person` is omitted, the most prolific author is chosen automatically.
     """
     if _db is None:
+        if _offline is not None:
+            _chaos["nuclear"] = _offline.nuclear(person)
+            _bust_status_cache()
+            return _chaos["nuclear"]
         raise HTTPException(status_code=503, detail="HydraDB not connected")
 
     commits = await _db.list_nodes_by_type("Commit")

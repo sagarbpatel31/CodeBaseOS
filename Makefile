@@ -2,7 +2,9 @@
 
 # Install deps, set up venv, install extension dev deps
 setup:
-	@echo "TODO: implement — python -m venv .venv && pip install -e '.[dev]' && cd extension && npm install && cd ../dashboard && npm install"
+	python3 -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'
+	cd extension && npm install
+	cd dashboard && npm install
 
 # Verify HydraDB connection + schema migrations
 hydradb-test:
@@ -32,21 +34,21 @@ extension-pack:
 dash:
 	cd dashboard && npm run dev
 
-# Clean DB, start everything, ingest Tokio
+# Clean DB, start everything, ingest the demo repos
 demo-cold:
-	@echo "TODO: implement — scripts/demo_cold_start.sh"
+	bash scripts/demo_cold_start.sh
 
-# Run the chaos test suite
+# Drive the chaos endpoints in sequence (tamper → restore → nuclear → revive)
 break:
-	@echo "TODO: implement — .venv/bin/python scripts/chaos.py"
+	python3 scripts/chaos.py
 
 # Walk the Merkle chain end-to-end
 verify:
-	@echo "TODO: implement — .venv/bin/cbos verify"
+	cbos verify
 
 # Print current OpenAI spend
 cost:
-	@echo "TODO: implement — .venv/bin/cbos cost"
+	cbos cost
 
 # Publish extension to VS Code Marketplace (run only at hour 42+)
 publish:
