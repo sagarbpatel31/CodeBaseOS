@@ -271,7 +271,13 @@ class Decision(BaseNode):
         src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Decision:{self.decision_id or str(self.id)[:8]}"
         src["description"] = self.summary
-        src["document_metadata"]["decision_id"] = self.decision_id
+        src["document_metadata"].update({
+            "decision_id": self.decision_id,
+            # Stored in metadata (HydraDB drops `description`) so /decisions can
+            # show the summary without a re-fetch.
+            "summary": self.summary,
+            "confidence": self.confidence,
+        })
         return src
 
 

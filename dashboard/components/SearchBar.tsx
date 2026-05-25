@@ -103,7 +103,16 @@ export function SearchBar() {
               {results.map((r, i) => (
                 <li
                   key={`${r.id}-${i}`}
-                  className="px-3 py-2 border-b border-gray-800/60 hover:bg-gray-800/50"
+                  onClick={() => {
+                    // Tell the page to center + inspect this node.
+                    window.dispatchEvent(
+                      new CustomEvent("cbos-focus", {
+                        detail: { id: r.id, nodeType: r.nodeType, title: r.title },
+                      })
+                    );
+                    setOpen(false);
+                  }}
+                  className="px-3 py-2 border-b border-gray-800/60 hover:bg-gray-800/50 cursor-pointer"
                 >
                   <div className="flex items-center gap-1.5">
                     <span className={`uppercase text-[10px] ${TYPE_COLOR[r.nodeType] ?? "text-gray-400"}`}>

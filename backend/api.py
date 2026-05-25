@@ -894,6 +894,34 @@ async def bus_factor(repo: str = "", top: int = 10):
     }
 
 
+@app.get("/decisions")
+async def decisions(repo: str = ""):
+    """List the architectural Decisions mined from the repo (headline feature).
+    Each links back to the PR it was extracted from."""
+    if _db is None:
+        return {"decisions": []}
+    import re
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for d in await _db.list_nodes_by_type("Decision"):
+        dm = d["dm"]
+        did = dm.get("decision_id", "")
+        summary = dm.get("summary", "") or d.get("title", "").replace("Decision:", "")
+        if did in seen:
+            continue
+        seen.add(did)
+        m = re.search(r"(\d+)", did)
+        url = f"https://github.com/{repo}/pull/{m.group(1)}" if (repo and m) else ""
+        out.append({
+            "decision_id": did,
+            "summary": summary,
+            "confidence": dm.get("confidence", ""),
+            "url": url,
+        })
+    return {"count": len(out), "decisions": out}
+
+
 @app.get("/why")
 async def why(file: str, line: int, repo: str = ""):
     """

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { GraphData, GraphNode } from "@/hooks/useGraphWS";
 import { nodeColor } from "@/lib/nodeColors";
 
@@ -16,13 +16,27 @@ interface ForceGraphProps {
   onNodeClick?: (node: GraphNode) => void;
   // Node ids to flag in red (chaos: orphaned authors + tampered episode).
   dangerIds?: Set<string>;
+  // Node id to center + zoom on (set when a search result is clicked).
+  focusId?: string | null;
 }
 
 type NodeWithPos = GraphNode & { x?: number; y?: number };
 
 const DANGER_COLOR = "#EF4444";
 
-export function ForceGraph({ graphData, onNodeClick, dangerIds }: ForceGraphProps) {
+export function ForceGraph({ graphData, onNodeClick, dangerIds, focusId }: ForceGraphProps) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!focusId || !fgRef.current) return;
+    const node = (graphData.nodes as NodeWithPos[]).find((n) => n.id === focusId);
+    if (node && node.x != null && node.y != null) {
+      fgRef.current.centerAt(node.x, node.y, 700);
+      fgRef.current.zoom(4, 700);
+    }
+  }, [focusId, graphData.nodes]);
+
   const nodeCanvasObject = useCallback(
     (node: NodeWithPos, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.label ?? node.id;
@@ -64,6 +78,7 @@ export function ForceGraph({ graphData, onNodeClick, dangerIds }: ForceGraphProp
   return (
     <div className="flex-1 bg-gray-950 overflow-hidden">
       <ForceGraph2D
+        ref={fgRef}
         graphData={graphData}
         onNodeClick={(node: NodeWithPos) => onNodeClick?.(node)}
         nodeCanvasObject={nodeCanvasObject}
