@@ -3,7 +3,25 @@
 Bi-temporal code provenance on HydraDB. "Right-click any line. Ask why. Get the
 real answer." Every fact is Merkle-verified; every LLM call is cost-capped at $5.
 
-## Setup (4 terminals)
+## Bulletproof demo — offline mode (recommended)
+
+Zero credentials, deterministic clean graph, **Merkle always green**, chaos
+buttons work. Best for a reliable live demo (no HydraDB indexing-lag surprises):
+
+```bash
+# T1 — backend (offline fixture; works even with a .env present)
+cd /Users/sagarpatel/Desktop/hackathon-hydradb/CodebaseOS
+CBOS_OFFLINE_DEMO=1 python3 -m uvicorn backend.api:app --port 8000
+
+# T2 — dashboard
+cd dashboard && npx next dev -p 3000
+```
+Open http://localhost:3000 — 31 nodes, 2 repos, Merkle ✓. Use the ChaosPanel /
+firehose / time-travel as normal. No ingest needed.
+
+---
+
+## Live mode — real HydraDB (4 terminals)
 
 ```bash
 # Always clear stale ports first

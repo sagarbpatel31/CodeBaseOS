@@ -106,12 +106,18 @@ _ws_manager = _WSManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _db, _synth
-    try:
-        _db = HydraClient.from_env()
-        await _db.ensure_tenant()
-    except Exception as exc:
-        print(f"[WARN] HydraDB not available: {exc}. Running in offline mode.")
+    if _OFFLINE_DEMO:
+        # Force the deterministic offline fixture even if .env has live creds,
+        # so `CBOS_OFFLINE_DEMO=1 uvicorn ...` is a one-command clean demo.
+        print("[INFO] CBOS_OFFLINE_DEMO=1 — serving bundled offline fixture.")
         _db = None
+    else:
+        try:
+            _db = HydraClient.from_env()
+            await _db.ensure_tenant()
+        except Exception as exc:
+            print(f"[WARN] HydraDB not available: {exc}. Running in offline mode.")
+            _db = None
     # The synthesizer is the only OpenAI caller; it logs CostEvents to the graph.
     _synth = Synthesizer(_db)
     yield
