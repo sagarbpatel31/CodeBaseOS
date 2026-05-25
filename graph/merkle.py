@@ -65,42 +65,36 @@ def extend_chain(episode: "Episode", prev_hash: str = "") -> "Episode":
     return updated.model_copy(update={"merkle_hash": new_hash})
 
 
-async def verify_chain(db: "HydraClient") -> MerkleResult:
-    """
-    Walk all Episodes from HydraDB in sequence_no order.
-    Recomputes each hash and checks prev_hash linkage.
-    """
-    episodes = await db.get_episodes_ordered()
+def evaluate_chain(episodes: list[dict]) -> MerkleResult:
+    """Pure Merkle linkage check over an already-ordered list of episode dicts.
 
+    Each episode's `prev_hash` must equal the previous episode's stored
+    `merkle_hash`. Returns the first break, if any. No I/O — so it can run
+    against a real DB read or against a deliberately corrupted view (the chaos
+    tamper path injects a bad hash and lets this same algorithm catch it).
+    """
     if not episodes:
-        result = MerkleResult(ok=True, head_hash="", chain_length=0)
-        await db.update_merkle_head("", 0, True)
-        return result
+        return MerkleResult(ok=True, head_hash="", chain_length=0)
 
     prev_hash = ""
     for ep in episodes:
-        seq = ep["sequence_no"]
-        expected_hash = hashlib.sha256(
-            _episode_canonical(
-                seq=seq,
-                action_type=ep.get("action_type", ""),
-                inputs_hash="",  # stored in content JSON
-                outputs_hash="",
-                prev_hash=ep.get("prev_hash", ""),
-            )
-        ).hexdigest()
-
+        seq = ep.get("sequence_no", 0)
         stored_hash = ep.get("merkle_hash", "")
         prev_in_ep = ep.get("prev_hash", "")
-
         if prev_in_ep != prev_hash:
-            result = MerkleResult(ok=False, head_hash=stored_hash, chain_length=seq, broken_at=seq)
-            await db.update_merkle_head(stored_hash, seq, False)
-            return result
-
+            return MerkleResult(ok=False, head_hash=stored_hash, chain_length=seq, broken_at=seq)
         prev_hash = stored_hash
 
     head_hash = episodes[-1].get("merkle_hash", "")
-    result = MerkleResult(ok=True, head_hash=head_hash, chain_length=len(episodes))
-    await db.update_merkle_head(head_hash, len(episodes), True)
+    return MerkleResult(ok=True, head_hash=head_hash, chain_length=len(episodes))
+
+
+async def verify_chain(db: "HydraClient") -> MerkleResult:
+    """
+    Walk all Episodes from HydraDB in chain order and check prev_hash linkage.
+    Caches the result on the client for fast /status reads.
+    """
+    episodes = await db.get_episodes_ordered()
+    result = evaluate_chain(episodes)
+    await db.update_merkle_head(result.head_hash, result.chain_length, result.ok)
     return result

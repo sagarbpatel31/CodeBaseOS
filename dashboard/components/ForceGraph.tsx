@@ -14,24 +14,37 @@ const ForceGraph2D = dynamic<any>(
 interface ForceGraphProps {
   graphData: GraphData;
   onNodeClick?: (node: GraphNode) => void;
+  // Node ids to flag in red (chaos: orphaned authors + tampered episode).
+  dangerIds?: Set<string>;
 }
 
 type NodeWithPos = GraphNode & { x?: number; y?: number };
 
-export function ForceGraph({ graphData, onNodeClick }: ForceGraphProps) {
+const DANGER_COLOR = "#EF4444";
+
+export function ForceGraph({ graphData, onNodeClick, dangerIds }: ForceGraphProps) {
   const nodeCanvasObject = useCallback(
     (node: NodeWithPos, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.label ?? node.id;
       const fontSize = Math.max(8, 12 / globalScale);
-      const r = node.superseded ? 4 : 6;
-      const color = nodeColor(node.nodeType ?? "");
+      const danger = dangerIds?.has(node.id) ?? false;
+      const r = danger ? 8 : node.superseded ? 4 : 6;
+      const color = danger ? DANGER_COLOR : nodeColor(node.nodeType ?? "");
 
       ctx.save();
-      ctx.globalAlpha = node.superseded ? 0.35 : 1;
+      ctx.globalAlpha = node.superseded && !danger ? 0.35 : 1;
       ctx.beginPath();
       ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI);
       ctx.fillStyle = color;
       ctx.fill();
+
+      if (danger) {
+        ctx.beginPath();
+        ctx.arc(node.x ?? 0, node.y ?? 0, r + 3, 0, 2 * Math.PI);
+        ctx.strokeStyle = DANGER_COLOR;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
 
       if (globalScale > 0.8) {
         ctx.font = `${fontSize}px monospace`;
@@ -41,7 +54,7 @@ export function ForceGraph({ graphData, onNodeClick }: ForceGraphProps) {
       }
       ctx.restore();
     },
-    []
+    [dangerIds]
   );
 
   return (

@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from graph.client import HydraClient
-from graph.merkle import verify_chain
+from graph.merkle import MerkleResult, evaluate_chain, verify_chain
 
 # ---------------------------------------------------------------------------
 # App-level state
@@ -41,6 +41,19 @@ _COST_CAP_USD = 5.00
 from collections import deque
 
 _firehose: deque = deque(maxlen=50)
+
+# Chaos layer state (CODEBASEOS_SPEC §10). Fault injection for the live demo:
+#   tamper  — a corrupted-hash view of one Episode; the real linkage check
+#             then reports the chain as broken (merkleOk=false) until restore.
+#   nuclear — an author marked "left the company"; their authored nodes become
+#             orphaned and the system suggests reviewers from repo activity.
+_chaos: dict[str, Any] = {"tamper": None, "nuclear": None}
+
+
+def _bust_status_cache() -> None:
+    """Force the next /status to recompute (so chaos toggles show instantly)."""
+    global _status_expires
+    _status_expires = 0.0
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -179,12 +192,37 @@ async def _gather_status(db: HydraClient):
     cost_task = asyncio.create_task(db.get_total_cost())
     count_task = asyncio.create_task(db.count_all_nodes())
     repo_task = asyncio.create_task(db.count_nodes_by_type("Repository"))
-    merkle_task = asyncio.create_task(verify_chain(db))
+    merkle_task = asyncio.create_task(_merkle_state())
 
     cost, node_count, repo_count, merkle = await asyncio.gather(
         cost_task, count_task, repo_task, merkle_task
     )
     return cost, node_count, repo_count, merkle
+
+
+async def _merkle_state() -> MerkleResult:
+    """Merkle verification for /status and /verify, honoring an active tamper.
+
+    With no tamper this is just `verify_chain`. With a tamper active we fetch
+    the real chain, inject the corrupted hash into the targeted Episode, and run
+    the SAME linkage algorithm — so the break the badge shows is detected by the
+    production verifier, not faked with a flag.
+    """
+    if _db is None:
+        return MerkleResult(ok=True, head_hash="", chain_length=0)
+    tamper = _chaos.get("tamper")
+    if not tamper:
+        return await verify_chain(_db)
+    episodes = await _db.get_episodes_ordered()
+    view: list[dict] = []
+    for ep in episodes:
+        ep = dict(ep)
+        if ep.get("id") == tamper["episode_id"]:
+            ep["merkle_hash"] = tamper["corrupted_hash"]
+        view.append(ep)
+    result = evaluate_chain(view)
+    await _db.update_merkle_head(result.head_hash, result.chain_length, result.ok)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1162,13 +1200,145 @@ async def webhook(request: Request):
 async def verify():
     if _db is None:
         return {"ok": True, "chain_length": 0, "head_hash": ""}
-    result = await verify_chain(_db)
+    result = await _merkle_state()
     return {
         "ok": result.ok,
         "chain_length": result.chain_length,
         "head_hash": result.head_hash,
         "broken_at": result.broken_at,
+        "tampered": bool(_chaos.get("tamper")),
     }
+
+
+# ---------------------------------------------------------------------------
+# Chaos layer (CODEBASEOS_SPEC §10) — live fault injection for the demo
+# ---------------------------------------------------------------------------
+
+@app.get("/chaos/state")
+async def chaos_state():
+    """Current chaos state for the dashboard (active tamper + nuclear author)."""
+    return {"tamper": _chaos.get("tamper"), "nuclear": _chaos.get("nuclear")}
+
+
+@app.post("/chaos/tamper")
+async def chaos_tamper():
+    """Inject a single corrupted hash into the Merkle chain.
+
+    Picks a real Episode that has a successor and corrupts its stored
+    merkle_hash in the verification view. The next Episode's prev_hash no longer
+    matches, so /verify and /status report the chain broken (badge turns red)
+    until /chaos/restore. One altered hash → tamper detected: that is the pitch.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    episodes = await _db.get_episodes_ordered()
+    if len(episodes) < 2:
+        raise HTTPException(
+            status_code=409,
+            detail="Need at least 2 episodes to demonstrate a chain break — ingest more first.",
+        )
+    idx = len(episodes) // 2
+    if idx >= len(episodes) - 1:
+        idx = len(episodes) - 2
+    target = episodes[idx]
+    original = target.get("merkle_hash", "") or ""
+    corrupted = ("deadbeef" + original[8:]) if len(original) > 8 else "deadbeefcafebabe"
+    _chaos["tamper"] = {
+        "episode_id": target.get("id", ""),
+        "sequence_no": target.get("sequence_no", 0),
+        "action_type": target.get("action_type", ""),
+        "original_hash": original,
+        "corrupted_hash": corrupted,
+    }
+    _bust_status_cache()
+    result = await _merkle_state()
+    return {
+        "tampered": _chaos["tamper"],
+        "merkleOk": result.ok,
+        "broken_at": result.broken_at,
+        "chain_length": result.chain_length,
+    }
+
+
+@app.post("/chaos/restore")
+async def chaos_restore():
+    """Clear the tamper. The chain re-verifies clean and the badge goes green."""
+    _chaos["tamper"] = None
+    _bust_status_cache()
+    result = await _merkle_state()
+    return {
+        "merkleOk": result.ok,
+        "chain_length": result.chain_length,
+        "head_hash": result.head_hash,
+    }
+
+
+@app.post("/chaos/nuclear")
+async def chaos_nuclear(person: str = ""):
+    """"Author goes nuclear": mark a contributor as having left the company.
+
+    Their authored nodes (commits, PRs, review comments) become orphaned, and
+    the system suggests reviewers from the most active remaining contributors.
+    If `person` is omitted, the most prolific author is chosen automatically.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+
+    commits = await _db.list_nodes_by_type("Commit")
+    prs = await _db.list_nodes_by_type("PR")
+    reviews = await _db.list_nodes_by_type("ReviewComment")
+    buckets = (("Commit", commits), ("PR", prs), ("ReviewComment", reviews))
+
+    def author_of(node: dict) -> str:
+        return (node.get("dm", {}).get("author_name") or "").strip()
+
+    counts: dict[str, int] = {}
+    for _label, nodes in buckets:
+        for n in nodes:
+            a = author_of(n)
+            if a:
+                counts[a] = counts.get(a, 0) + 1
+    if not counts:
+        raise HTTPException(
+            status_code=409,
+            detail="No authored nodes found — ingest commits/PRs first.",
+        )
+
+    target = person or max(counts, key=lambda k: counts[k])
+    target_l = target.lower()
+
+    orphaned_ids: list[str] = []
+    by_type: dict[str, int] = {}
+    for label, nodes in buckets:
+        for n in nodes:
+            if author_of(n).lower() == target_l:
+                nid = n.get("id", "")
+                if nid:
+                    orphaned_ids.append(nid)
+                    by_type[label] = by_type.get(label, 0) + 1
+
+    reviewers = sorted(
+        ((a, c) for a, c in counts.items() if a.lower() != target_l),
+        key=lambda x: -x[1],
+    )[:3]
+
+    _chaos["nuclear"] = {
+        "person": target,
+        "orphaned_count": len(orphaned_ids),
+        "orphaned_ids": orphaned_ids,
+        "by_type": by_type,
+        "suggested_reviewers": [{"name": a, "activity": c} for a, c in reviewers],
+    }
+    _bust_status_cache()
+    return _chaos["nuclear"]
+
+
+@app.post("/chaos/revive")
+async def chaos_revive():
+    """Clear the nuclear-author state; orphaned nodes return to normal."""
+    _chaos["nuclear"] = None
+    _bust_status_cache()
+    return {"revived": True}
 
 
 @app.get("/baseline-rag")
