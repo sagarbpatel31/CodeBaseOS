@@ -24,6 +24,12 @@ load_dotenv()
 
 from graph.client import HydraClient
 from graph.merkle import MerkleResult, evaluate_chain, verify_chain
+from synthesizer.synthesizer import (
+    COST_CAP_USD,
+    BudgetExceeded,
+    SynthesisResult,
+    Synthesizer,
+)
 
 # ---------------------------------------------------------------------------
 # App-level state
@@ -31,11 +37,14 @@ from graph.merkle import MerkleResult, evaluate_chain, verify_chain
 
 _db: Optional[HydraClient] = None
 
+# The single OpenAI chokepoint (AGENTS.md invariant #8). Created in lifespan.
+_synth: Optional[Synthesizer] = None
+
 # /status cache: refresh every 2s (shorter than 5s poll interval)
 _status_cache: dict[str, Any] = {}
 _status_expires: float = 0.0
 _STATUS_TTL = 2.0
-_COST_CAP_USD = 5.00
+_COST_CAP_USD = COST_CAP_USD
 
 # Webhook firehose: most-recent ingestion events (newest first), capped.
 from collections import deque
@@ -86,13 +95,15 @@ _ws_manager = _WSManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _db
+    global _db, _synth
     try:
         _db = HydraClient.from_env()
         await _db.ensure_tenant()
     except Exception as exc:
         print(f"[WARN] HydraDB not available: {exc}. Running in offline mode.")
         _db = None
+    # The synthesizer is the only OpenAI caller; it logs CostEvents to the graph.
+    _synth = Synthesizer(_db)
     yield
     # Cleanup on shutdown (nothing to do for now)
 
@@ -539,16 +550,15 @@ async def er_queue():
 # Shared LLM helpers (cost gate, graph recall, cost logging)
 # ---------------------------------------------------------------------------
 
-async def _check_budget() -> None:
-    """Refuse LLM calls once the hard cost cap is reached (AGENTS.md invariant)."""
-    if _db is None:
-        return
-    spent = await _db.get_total_cost()
-    if spent >= _COST_CAP_USD:
-        raise HTTPException(
-            status_code=402,
-            detail=f"Cost cap reached: ${spent:.4f} / ${_COST_CAP_USD:.2f}. LLM calls disabled.",
-        )
+async def _synthesize(**kwargs) -> SynthesisResult:
+    """Call the single synthesizer chokepoint, translating a hard-cap hit into
+    an HTTP 402 so the cost discipline is visible at the API boundary."""
+    if _synth is None:
+        raise HTTPException(status_code=503, detail="Synthesizer not initialized")
+    try:
+        return await _synth.complete(**kwargs)
+    except BudgetExceeded as exc:
+        raise HTTPException(status_code=402, detail=str(exc))
 
 
 async def _recall_context(query: str, max_results: int = 8) -> tuple[str, int]:
@@ -573,26 +583,6 @@ async def _recall_context(query: str, max_results: int = 8) -> tuple[str, int]:
             items.append(content[:400])
     context = "\n\n".join(items) or "No relevant context found in the knowledge graph."
     return context, len(sources) + len(chunks)
-
-
-async def _log_llm_cost(usage, call_source: str) -> float:
-    """Compute gpt-4o-mini cost from usage, persist a CostEvent, return cost."""
-    cost_usd = (usage.prompt_tokens * 0.00000015) + (usage.completion_tokens * 0.0000006)
-    from graph.schema import CostEvent
-    from graph.bitemporal import make_node
-    from uuid import uuid4
-    cost_node = make_node(
-        CostEvent,
-        episode_id=uuid4(),
-        source="openai",
-        model="gpt-4o-mini",
-        cost_usd=cost_usd,
-        input_tokens=usage.prompt_tokens,
-        output_tokens=usage.completion_tokens,
-        call_source=call_source,
-    )
-    await _db.write_node(cost_node)
-    return cost_usd
 
 
 @app.post("/resolve")
@@ -650,9 +640,6 @@ async def why(file: str, line: int, repo: str = ""):
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
-    await _check_budget()
-    import os
-    from openai import AsyncOpenAI
 
     query = f"Why does the code in {file} at line {line} exist? What commits or decisions introduced it?"
     if repo:
@@ -660,36 +647,27 @@ async def why(file: str, line: int, repo: str = ""):
 
     try:
         context, ctx_count = await _recall_context(query)
-        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        chat = await oai.chat.completions.create(
-            model="gpt-4o-mini",
+        result = await _synthesize(
+            call_source="why",
+            cache_key=f"{repo}|{file}|{line}",
             max_tokens=400,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are CodebaseOS, a code provenance assistant. "
-                        "Given context from a codebase knowledge graph (commits, files, decisions), "
-                        "explain concisely WHY the referenced code exists. "
-                        "Focus on the intent, the problem it solves, and what changed. "
-                        "Be specific and cite commit messages or decisions when available. "
-                        "3-5 sentences max."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Question: {query}\n\nContext from knowledge graph:\n{context}",
-                },
-            ],
+            system=(
+                "You are CodebaseOS, a code provenance assistant. "
+                "Given context from a codebase knowledge graph (commits, files, decisions), "
+                "explain concisely WHY the referenced code exists. "
+                "Focus on the intent, the problem it solves, and what changed. "
+                "Be specific and cite commit messages or decisions when available. "
+                "3-5 sentences max."
+            ),
+            user=f"Question: {query}\n\nContext from knowledge graph:\n{context}",
         )
-        explanation = chat.choices[0].message.content or "No explanation generated."
-        cost_usd = await _log_llm_cost(chat.usage, "why")
         return {
             "file": file,
             "line": line,
-            "explanation": explanation,
+            "explanation": result.text or "No explanation generated.",
             "context_nodes": ctx_count,
-            "cost_usd": round(cost_usd, 6),
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
         }
     except HTTPException:
         raise
@@ -705,10 +683,7 @@ async def five_whys(file: str, line: int, repo: str = ""):
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
-    await _check_budget()
     import json as _json
-    import os
-    from openai import AsyncOpenAI
 
     query = f"Why does the code in {file} at line {line} exist? Trace the root cause."
     if repo:
@@ -716,30 +691,24 @@ async def five_whys(file: str, line: int, repo: str = ""):
 
     try:
         context, ctx_count = await _recall_context(query, max_results=10)
-        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        chat = await oai.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=600,
+        result = await _synthesize(
+            call_source="five-whys",
+            cache_key=f"{repo}|{file}|{line}",
+            max_tokens=500,
             response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are CodebaseOS performing a '5 Whys' root-cause analysis on "
-                        "a piece of code, grounded in a codebase knowledge graph. Produce a "
-                        "causal chain of up to 5 levels, each level asking WHY the previous "
-                        "answer holds, drilling from the immediate code change toward the "
-                        "underlying intent or decision. Be specific; cite commits/PRs/decisions "
-                        "from the context when possible; do not invent hashes. "
-                        'Respond as JSON: {"chain": [{"question": "...", "answer": "..."}]}'
-                    ),
-                },
-                {"role": "user", "content": f"Target: {query}\n\nKnowledge graph context:\n{context}"},
-            ],
+            system=(
+                "You are CodebaseOS performing a '5 Whys' root-cause analysis on "
+                "a piece of code, grounded in a codebase knowledge graph. Produce a "
+                "causal chain of up to 5 levels, each level asking WHY the previous "
+                "answer holds, drilling from the immediate code change toward the "
+                "underlying intent or decision. Be specific; cite commits/PRs/decisions "
+                "from the context when possible; do not invent hashes. "
+                'Respond as JSON: {"chain": [{"question": "...", "answer": "..."}]}'
+            ),
+            user=f"Target: {query}\n\nKnowledge graph context:\n{context}",
         )
-        raw = chat.choices[0].message.content or "{}"
         try:
-            parsed = _json.loads(raw)
+            parsed = _json.loads(result.text or "{}")
             chain = parsed.get("chain", []) if isinstance(parsed, dict) else []
         except Exception:
             chain = []
@@ -748,13 +717,13 @@ async def five_whys(file: str, line: int, repo: str = ""):
             for i, step in enumerate(chain[:5])
             if isinstance(step, dict)
         ]
-        cost_usd = await _log_llm_cost(chat.usage, "five-whys")
         return {
             "file": file,
             "line": line,
             "chain": chain,
             "context_nodes": ctx_count,
-            "cost_usd": round(cost_usd, 6),
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
         }
     except HTTPException:
         raise
@@ -770,40 +739,31 @@ async def summary(file: str, line: int, symbol: str = "", repo: str = ""):
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
-    await _check_budget()
-    import os
-    from openai import AsyncOpenAI
 
     target = f"the symbol '{symbol}' in {file}" if symbol else f"{file} at line {line}"
     scope = f"In repository {repo}, " if repo else ""
     query = f"{scope}what does {target} do? Its purpose and behavior."
     try:
         context, ctx_count = await _recall_context(query, max_results=6)
-        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        chat = await oai.chat.completions.create(
-            model="gpt-4o-mini",
+        result = await _synthesize(
+            call_source="summary",
+            cache_key=f"{repo}|{file}|{line}|{symbol}",
             max_tokens=250,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are CodebaseOS. Summarize WHAT the referenced code does — its "
-                        "purpose and behavior — concisely (2-3 sentences). Use the knowledge "
-                        "graph context if helpful. Do not invent commit hashes."
-                    ),
-                },
-                {"role": "user", "content": f"Target: {query}\n\nContext:\n{context}"},
-            ],
+            system=(
+                "You are CodebaseOS. Summarize WHAT the referenced code does — its "
+                "purpose and behavior — concisely (2-3 sentences). Use the knowledge "
+                "graph context if helpful. Do not invent commit hashes."
+            ),
+            user=f"Target: {query}\n\nContext:\n{context}",
         )
-        summary_text = chat.choices[0].message.content or "No summary generated."
-        cost_usd = await _log_llm_cost(chat.usage, "summary")
         return {
             "file": file,
             "line": line,
             "symbol": symbol,
-            "summary": summary_text,
+            "summary": result.text or "No summary generated.",
             "context_nodes": ctx_count,
-            "cost_usd": round(cost_usd, 6),
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
         }
     except HTTPException:
         raise
@@ -862,40 +822,31 @@ async def counterfactual(decision: str):
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
-    await _check_budget()
-    import os
-    from openai import AsyncOpenAI
 
     query = f"What commits, PRs, files, and decisions relate to: {decision}?"
     try:
         context, ctx_count = await _recall_context(query, max_results=10)
-        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        chat = await oai.chat.completions.create(
-            model="gpt-4o-mini",
+        result = await _synthesize(
+            call_source="counterfactual",
+            cache_key=decision,
             max_tokens=500,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are CodebaseOS reasoning about a counterfactual: what would "
-                        "likely happen if the described decision or change were reversed or "
-                        "never made. Use the codebase knowledge-graph context to ground your "
-                        "reasoning in real commits/PRs/files. Cover: (1) what code/behavior "
-                        "would differ, (2) which downstream files or PRs would be affected, "
-                        "(3) risks or regressions. Be concrete; do not invent hashes. "
-                        "4-6 sentences."
-                    ),
-                },
-                {"role": "user", "content": f"Decision/change to reverse: {decision}\n\nKnowledge graph context:\n{context}"},
-            ],
+            system=(
+                "You are CodebaseOS reasoning about a counterfactual: what would "
+                "likely happen if the described decision or change were reversed or "
+                "never made. Use the codebase knowledge-graph context to ground your "
+                "reasoning in real commits/PRs/files. Cover: (1) what code/behavior "
+                "would differ, (2) which downstream files or PRs would be affected, "
+                "(3) risks or regressions. Be concrete; do not invent hashes. "
+                "4-6 sentences."
+            ),
+            user=f"Decision/change to reverse: {decision}\n\nKnowledge graph context:\n{context}",
         )
-        analysis = chat.choices[0].message.content or "No analysis generated."
-        cost_usd = await _log_llm_cost(chat.usage, "counterfactual")
         return {
             "decision": decision,
-            "analysis": analysis,
+            "analysis": result.text or "No analysis generated.",
             "context_nodes": ctx_count,
-            "cost_usd": round(cost_usd, 6),
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
         }
     except HTTPException:
         raise
@@ -911,10 +862,7 @@ async def handoff(module: str, repo: str = ""):
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
-    await _check_budget()
     import json as _json
-    import os
-    from openai import AsyncOpenAI
 
     scope = f"in repository {repo}, " if repo else ""
     query = (
@@ -923,34 +871,27 @@ async def handoff(module: str, repo: str = ""):
     )
     try:
         context, ctx_count = await _recall_context(query, max_results=14)
-        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        chat = await oai.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=700,
+        result = await _synthesize(
+            call_source="handoff",
+            cache_key=f"{repo}|{module}",
+            max_tokens=500,
             response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are CodebaseOS generating a developer ONBOARDING TOUR for a module, "
-                        "grounded in a codebase knowledge graph. Produce a concise, practical tour "
-                        "for someone new to this module. Cite real files/commits/PRs/people from the "
-                        "context; do not invent hashes. Respond as JSON: "
-                        '{"overview": "...", "start_here": "...", '
-                        '"key_files": ["..."], "key_people": ["..."], "key_decisions": ["..."]}'
-                    ),
-                },
-                {"role": "user", "content": f"Module: {module}\n\nKnowledge graph context:\n{context}"},
-            ],
+            system=(
+                "You are CodebaseOS generating a developer ONBOARDING TOUR for a module, "
+                "grounded in a codebase knowledge graph. Produce a concise, practical tour "
+                "for someone new to this module. Cite real files/commits/PRs/people from the "
+                "context; do not invent hashes. Respond as JSON: "
+                '{"overview": "...", "start_here": "...", '
+                '"key_files": ["..."], "key_people": ["..."], "key_decisions": ["..."]}'
+            ),
+            user=f"Module: {module}\n\nKnowledge graph context:\n{context}",
         )
-        raw = chat.choices[0].message.content or "{}"
         try:
-            tour = _json.loads(raw)
+            tour = _json.loads(result.text or "{}")
             if not isinstance(tour, dict):
                 tour = {}
         except Exception:
             tour = {}
-        cost_usd = await _log_llm_cost(chat.usage, "handoff")
         return {
             "module": module,
             "overview": str(tour.get("overview", "")),
@@ -959,7 +900,8 @@ async def handoff(module: str, repo: str = ""):
             "key_people": [str(x) for x in (tour.get("key_people") or [])][:8],
             "key_decisions": [str(x) for x in (tour.get("key_decisions") or [])][:8],
             "context_nodes": ctx_count,
-            "cost_usd": round(cost_usd, 6),
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
         }
     except HTTPException:
         raise
@@ -1349,57 +1291,36 @@ async def baseline_rag(file: str, line: int, repo: str = ""):
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
-    await _check_budget()
-    import os
-    from openai import AsyncOpenAI
 
     query = f"Why does the code in {file} at line {line} exist? What commits or decisions introduced it?"
     if repo:
         query = f"In repository {repo}, {query}"
 
     try:
-        oai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        chat = await oai.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=400,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a plain code assistant with NO access to the "
-                        "repository history, commits, PRs, or decisions — only the "
-                        "file path and line number the user mentions. Answer the "
-                        "question as best you can from general knowledge. Do not "
-                        "invent specific commit hashes, PR numbers, or authors. "
-                        "3-5 sentences max."
-                    ),
-                },
-                {"role": "user", "content": query},
-            ],
-        )
-        explanation = chat.choices[0].message.content or "No explanation generated."
-        cost_usd = (chat.usage.prompt_tokens * 0.00000015) + (chat.usage.completion_tokens * 0.0000006)
-        from graph.schema import CostEvent
-        from graph.bitemporal import make_node
-        from uuid import uuid4
-        cost_node = make_node(
-            CostEvent,
-            episode_id=uuid4(),
-            source="openai",
-            model="gpt-4o-mini",
-            cost_usd=cost_usd,
-            input_tokens=chat.usage.prompt_tokens,
-            output_tokens=chat.usage.completion_tokens,
+        result = await _synthesize(
             call_source="baseline-rag",
+            cache_key=f"{repo}|{file}|{line}",
+            max_tokens=400,
+            system=(
+                "You are a plain code assistant with NO access to the "
+                "repository history, commits, PRs, or decisions — only the "
+                "file path and line number the user mentions. Answer the "
+                "question as best you can from general knowledge. Do not "
+                "invent specific commit hashes, PR numbers, or authors. "
+                "3-5 sentences max."
+            ),
+            user=query,
         )
-        await _db.write_node(cost_node)
         return {
             "file": file,
             "line": line,
-            "explanation": explanation,
+            "explanation": result.text or "No explanation generated.",
             "context_nodes": 0,
-            "cost_usd": round(cost_usd, 6),
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
             "mode": "baseline-no-graph",
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
