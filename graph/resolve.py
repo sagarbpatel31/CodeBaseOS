@@ -61,6 +61,7 @@ def resolve_identities(identities: list[dict[str, Any]]) -> dict[str, Any]:
     # --- Strong signals -> union ---
     by_email: dict[str, list[str]] = {}
     by_platform_uid: dict[str, list[str]] = {}
+    by_platform_user: dict[str, list[str]] = {}
     for i in identities:
         nid = i.get("id")
         if not nid:
@@ -69,12 +70,21 @@ def resolve_identities(identities: list[dict[str, Any]]) -> dict[str, Any]:
         email = (dm.get("email") or "").strip().lower()
         platform = (dm.get("platform") or "").strip().lower()
         puid = (dm.get("platform_user_id") or "").strip()
+        uname = (dm.get("username") or "").strip().lower()
         if email:
             by_email.setdefault(email, []).append(nid)
         if platform and puid:
             by_platform_uid.setdefault(f"{platform}:{puid}", []).append(nid)
+        # Same login on the same platform = same account = same person.
+        # (Repeated ingests create one Identity node per event for the same user.)
+        if platform and uname:
+            by_platform_user.setdefault(f"{platform}:{uname}", []).append(nid)
 
-    for group in list(by_email.values()) + list(by_platform_uid.values()):
+    for group in (
+        list(by_email.values())
+        + list(by_platform_uid.values())
+        + list(by_platform_user.values())
+    ):
         for other in group[1:]:
             uf.union(group[0], other)
 

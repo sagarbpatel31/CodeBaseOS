@@ -792,26 +792,23 @@ async def search_nl(q: str, limit: int = 12):
             graph_context=True,
         )
         results: list[dict] = []
+        seen_titles: set[str] = set()
         sources = getattr(recall_result, "sources", None) or []
-        for src in sources[:limit]:
+        for src in sources:
             am = getattr(src, "additional_metadata", {}) or {}
+            title = getattr(src, "title", "") or ""
+            # Re-ingests create duplicate nodes with identical titles — show once.
+            if title and title in seen_titles:
+                continue
+            seen_titles.add(title)
             results.append({
                 "id": getattr(src, "id", "") or getattr(src, "source_id", ""),
                 "nodeType": am.get("node_type", ""),
-                "title": getattr(src, "title", "") or "",
+                "title": title,
                 "score": round(float(getattr(src, "score", 0.0) or 0.0), 4),
             })
-        # Fall back to chunk content for snippets when sources are thin.
-        chunks = getattr(recall_result, "chunks", None) or []
-        for chunk in chunks[: max(0, limit - len(results))]:
-            content = getattr(chunk, "chunk_content", "") or ""
-            if content:
-                results.append({
-                    "id": getattr(chunk, "source_id", ""),
-                    "nodeType": "chunk",
-                    "title": content[:80],
-                    "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-                })
+            if len(results) >= limit:
+                break
         return {"query": q, "count": len(results), "results": results}
     except Exception as exc:
         print(f"[WARN] search_nl failed: {exc}")
