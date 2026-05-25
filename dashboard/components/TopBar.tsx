@@ -52,7 +52,7 @@ export function TopBar() {
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-1.5">
           <span className="text-gray-500">cost</span>
-          <span className="text-green-400">${cost.toFixed(2)}</span>
+          <span className="text-green-400">${cost.toFixed(4)}</span>
           <span className="text-gray-600">/</span>
           <span className="text-gray-400">${cap.toFixed(2)}</span>
         </div>

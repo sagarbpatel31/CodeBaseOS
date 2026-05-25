@@ -13,11 +13,12 @@ const ForceGraph2D = dynamic<any>(
 
 interface ForceGraphProps {
   graphData: GraphData;
+  onNodeClick?: (node: GraphNode) => void;
 }
 
 type NodeWithPos = GraphNode & { x?: number; y?: number };
 
-export function ForceGraph({ graphData }: ForceGraphProps) {
+export function ForceGraph({ graphData, onNodeClick }: ForceGraphProps) {
   const nodeCanvasObject = useCallback(
     (node: NodeWithPos, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.label ?? node.id;
@@ -47,6 +48,7 @@ export function ForceGraph({ graphData }: ForceGraphProps) {
     <div className="flex-1 bg-gray-950 overflow-hidden">
       <ForceGraph2D
         graphData={graphData}
+        onNodeClick={(node: NodeWithPos) => onNodeClick?.(node)}
         nodeCanvasObject={nodeCanvasObject}
         nodeCanvasObjectMode={() => "replace"}
         linkColor={() => "#374151"}

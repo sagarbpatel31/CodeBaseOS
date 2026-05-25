@@ -80,7 +80,7 @@ export class StatusBar {
   }
 
   private render(status: StatusResponse, stale: boolean): void {
-    const cost = `$${status.costSpent.toFixed(2)} / $${status.costCap.toFixed(2)}`;
+    const cost = `$${status.costSpent.toFixed(4)} / $${status.costCap.toFixed(2)}`;
     const nodes = `${status.nodeCount.toLocaleString()} nodes`;
     const merkle = status.merkleOk ? 'Merkle ✓' : 'Merkle ✗';
     const staleMarker = stale ? ' ?' : '';
@@ -129,7 +129,7 @@ export class StatusBar {
 
     const md = new vscode.MarkdownString(
       `**CodebaseOS**\n\n` +
-        `$${status.costSpent.toFixed(2)} spent of $${status.costCap.toFixed(2)} budget\n\n` +
+        `$${status.costSpent.toFixed(4)} spent of $${status.costCap.toFixed(2)} budget\n\n` +
         `${status.nodeCount.toLocaleString()} nodes across ${status.repoCount} ${repoLabel}\n\n` +
         `Merkle chain ${merkleStatus} (head: ${headSnippet})\n\n` +
         `Last updated: ${freshness}\n\n` +
