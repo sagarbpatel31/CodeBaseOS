@@ -714,6 +714,8 @@ async def five_whys(file: str, line: int, repo: str = ""):
     One LLM call produces the whole causal chain, grounded in graph context.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.five_whys(file, line)
         raise HTTPException(status_code=503, detail="HydraDB not connected")
     import json as _json
 
@@ -855,6 +857,8 @@ async def counterfactual(decision: str):
     `decision` is free text or a decision summary.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.counterfactual(decision)
         raise HTTPException(status_code=503, detail="HydraDB not connected")
 
     query = f"What commits, PRs, files, and decisions relate to: {decision}?"
@@ -895,6 +899,8 @@ async def handoff(module: str, repo: str = ""):
     people, key decisions, and where to start. Grounded in HydraDB recall.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.handoff(module)
         raise HTTPException(status_code=503, detail="HydraDB not connected")
     import json as _json
 
@@ -1340,6 +1346,8 @@ async def baseline_rag(file: str, line: int, repo: str = ""):
     value of the graph by contrast — this path cannot cite commits or decisions.
     """
     if _db is None:
+        if _offline is not None:
+            return _offline.baseline_rag(file, line)
         raise HTTPException(status_code=503, detail="HydraDB not connected")
 
     query = f"Why does the code in {file} at line {line} exist? What commits or decisions introduced it?"

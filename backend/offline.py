@@ -255,3 +255,56 @@ class OfflineStore:
             "summary": f"[offline demo] {target} implements the core path described in its module's PRs.",
             "context_nodes": 5, "cost_usd": 0.0, "cached": False,
         }
+
+    def five_whys(self, file: str, line: int) -> dict:
+        chain = [
+            {"level": 1, "question": f"Why does {file} look like this?",
+             "answer": "Commit a1b2c3d4 reworked it as part of PR #5821."},
+            {"level": 2, "question": "Why did PR #5821 happen?",
+             "answer": "It replaced session-affinity auth with stateless JWT verification."},
+            {"level": 3, "question": "Why was that needed?",
+             "answer": "Issue #5644 reported session affinity breaking on region failover."},
+            {"level": 4, "question": "Why did failover break sessions?",
+             "answer": "Sessions were pinned to a single region with no shared store."},
+            {"level": 5, "question": "Why was there no shared store?",
+             "answer": "The original design (Decision D0007) optimized for single-region latency."},
+        ]
+        return {
+            "file": file, "line": line, "chain": chain,
+            "context_nodes": 10, "cost_usd": 0.0, "cached": False,
+        }
+
+    def counterfactual(self, decision: str) -> dict:
+        return {
+            "decision": decision,
+            "analysis": (
+                f"[offline demo] If '{decision}' were reversed, auth would fall back to "
+                "session-affinity, re-breaking region failover (Issue #5644). PR #5821 and "
+                "the files it touched (src/net/tcp/stream.rs) would need to revert, and "
+                "downstream services relying on stateless JWT verification would regress."
+            ),
+            "context_nodes": 10, "cost_usd": 0.0, "cached": False,
+        }
+
+    def handoff(self, module: str) -> dict:
+        return {
+            "module": module,
+            "overview": f"[offline demo] '{module}' owns the runtime task + sync primitives shaped by PRs #5821 and #6033.",
+            "start_here": "src/runtime/task/mod.rs — the scheduler entry point.",
+            "key_files": ["src/runtime/task/mod.rs", "src/sync/mutex.rs", "src/net/tcp/stream.rs"],
+            "key_people": ["Alice Ryhl", "Carl Lerche"],
+            "key_decisions": ["Adopt JWT-based auth (D0007)", "Refactor task scheduler (PR #6033)"],
+            "context_nodes": 14, "cost_usd": 0.0, "cached": False,
+        }
+
+    def baseline_rag(self, file: str, line: int) -> dict:
+        return {
+            "file": file, "line": line,
+            "explanation": (
+                "[offline demo · no graph] Without repository history I can only guess: "
+                f"{file} likely contains logic related to its filename. I cannot cite the "
+                "commit, PR, issue, or person responsible — that context lives in the graph."
+            ),
+            "context_nodes": 0, "cost_usd": 0.0, "cached": False, "mode": "baseline-no-graph",
+        }
+

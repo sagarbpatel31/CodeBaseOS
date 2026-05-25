@@ -1,4 +1,5 @@
-from graph.client import HydraClient
+from typing import Any
+
 from graph.schema import (
     Episode,
     Repository,
@@ -14,6 +15,17 @@ from graph.schema import (
     Identity,
     CostEvent,
 )
+
+
+def __getattr__(name: str) -> Any:  # PEP 562
+    # HydraClient pulls the hydra_db SDK; import it lazily so the pure schema
+    # subset (and the provenance spinoff) can be used without that dependency.
+    if name == "HydraClient":
+        from graph.client import HydraClient
+
+        return HydraClient
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "HydraClient",
