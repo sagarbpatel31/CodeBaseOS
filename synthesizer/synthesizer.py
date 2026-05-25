@@ -18,6 +18,8 @@ Pricing constants are for gpt-4o-mini (the only permitted model).
 from __future__ import annotations
 
 import os
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import uuid4
@@ -31,6 +33,12 @@ COST_CAP_USD = 5.00
 PER_CALL_CAP_USD = 0.05
 MAX_INPUT_TOKENS = 4000
 MAX_OUTPUT_TOKENS = 500
+
+# Cache bounds. The TTL caps how long a cached answer can lag the graph (so new
+# ingests/decisions for the same location are eventually reflected); the max
+# entry count bounds memory since several endpoints pass free-form cache keys.
+CACHE_TTL_SECONDS = 300.0
+CACHE_MAX_ENTRIES = 512
 
 
 class BudgetExceeded(Exception):
@@ -70,10 +78,35 @@ class Synthesizer:
     read total spend (budget gate) and to persist CostEvent nodes.
     """
 
-    def __init__(self, db: Any = None) -> None:
+    def __init__(
+        self,
+        db: Any = None,
+        cache_ttl_seconds: float = CACHE_TTL_SECONDS,
+        cache_max_entries: int = CACHE_MAX_ENTRIES,
+    ) -> None:
         self._db = db
         self._client: Any = None
-        self._cache: dict[tuple[str, str], SynthesisResult] = {}
+        # (call_source, cache_key) -> (result, expires_at). OrderedDict gives LRU.
+        self._cache: "OrderedDict[tuple[str, str], tuple[SynthesisResult, float]]" = OrderedDict()
+        self._cache_ttl = cache_ttl_seconds
+        self._cache_max = max(1, cache_max_entries)
+
+    def _cache_get(self, key: tuple[str, str]) -> Optional[SynthesisResult]:
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        result, expires_at = entry
+        if self._cache_ttl > 0 and time.monotonic() >= expires_at:
+            self._cache.pop(key, None)  # stale → drop, forces a fresh synthesis
+            return None
+        self._cache.move_to_end(key)  # mark most-recently-used
+        return result
+
+    def _cache_put(self, key: tuple[str, str], result: SynthesisResult) -> None:
+        self._cache[key] = (result, time.monotonic() + self._cache_ttl)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._cache_max:
+            self._cache.popitem(last=False)  # evict least-recently-used
 
     def _oai(self) -> Any:
         if self._client is None:
@@ -101,11 +134,12 @@ class Synthesizer:
 
         Raises BudgetExceeded if the hard cap is already reached.
         """
-        # 1. Cache hit → free, no API call, no new CostEvent.
+        # 1. Cache hit (fresh) → free, no API call, no new CostEvent.
         ck = (call_source, cache_key) if cache_key is not None else None
-        if ck is not None and ck in self._cache:
-            hit = self._cache[ck]
-            return SynthesisResult(hit.text, 0.0, True, hit.input_tokens, hit.output_tokens)
+        if ck is not None:
+            hit = self._cache_get(ck)
+            if hit is not None:
+                return SynthesisResult(hit.text, 0.0, True, hit.input_tokens, hit.output_tokens)
 
         # 2. Hard budget gate — fail closed.
         spent = await self._spent()
@@ -147,7 +181,7 @@ class Synthesizer:
             output_tokens=usage.completion_tokens,
         )
         if ck is not None:
-            self._cache[ck] = result
+            self._cache_put(ck, result)
         return result
 
     async def _log_cost(self, usage: Any, cost: float, call_source: str) -> None:
