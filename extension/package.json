@@ -9,6 +9,7 @@
   },
   "categories": ["Other"],
   "keywords": ["provenance", "history", "why", "graph", "HydraDB"],
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/sagarbpatel31/CodeBaseOS.git"
