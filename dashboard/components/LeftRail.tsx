@@ -8,6 +8,9 @@ interface Repo {
   name: string;
   defaultBranch?: string;
   txTime?: string;
+  complete?: boolean;
+  ingestedCommits?: number;
+  totalCommits?: number;
 }
 
 interface Decision {
@@ -121,9 +124,14 @@ export function LeftRail() {
                 <span className="text-green-400">▸</span>
                 <span className="text-gray-200 truncate">{repo.name}</span>
               </div>
-              {repo.defaultBranch && (
-                <div className="text-gray-600 pl-3.5 mt-0.5">{repo.defaultBranch}</div>
-              )}
+              <div className="text-gray-600 pl-3.5 mt-0.5 flex items-center gap-2">
+                {repo.defaultBranch && <span>{repo.defaultBranch}</span>}
+                {repo.totalCommits ? (
+                  <span className={repo.complete ? "text-green-400" : "text-amber-400"}>
+                    {repo.complete ? "✓ complete" : "◐ sampled"} {repo.ingestedCommits}/{repo.totalCommits}
+                  </span>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>

@@ -151,7 +151,8 @@ def verify() -> None:
 @click.option("--limit", default=1, show_default=True, help="Number of recent commits to ingest (fetched from GitHub API).")
 @click.option("--prs", default=0, show_default=True, help="Number of recent PRs to ingest (with review comments).")
 @click.option("--issues", default=0, show_default=True, help="Number of recent issues to ingest.")
-def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> None:
+@click.option("--auto", is_flag=True, default=False, help="Auto-pick limits by repo size: small repos ingest fully, large ones are sampled + flagged.")
+def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int, auto: bool) -> None:
     """
     Ingest a GitHub repository commit(s).
 
@@ -179,11 +180,29 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
 
     owner, repo_name = repo.split("/", 1)
 
+    # --auto: ingest small repos fully, sample large ones (set below once we
+    # can call the GitHub API). Cap keeps a "full" ingest bounded + fast.
+    AUTO_FULL_CAP = 60
+
     async def _run() -> None:
+        nonlocal limit, prs, issues
         db = _get_db()
         ingester = GitHubIngester.from_env(db)
+        total_commits = 0
         try:
             click.echo(f"Repository: {owner}/{repo_name}")
+
+            if auto and sha is None:
+                total_commits = await ingester.count_commits(owner, repo_name)
+                if total_commits and total_commits <= AUTO_FULL_CAP:
+                    limit, prs, issues = total_commits, 20, 20
+                    click.echo(f"  Auto: small repo ({total_commits} commits) — ingesting fully ✓")
+                else:
+                    limit, prs, issues = AUTO_FULL_CAP, 15, 15
+                    click.echo(
+                        f"  Auto: large repo (~{total_commits or '?'} commits) — "
+                        f"sampling latest {AUTO_FULL_CAP}"
+                    )
 
             # Ensure the repository node exists (shared across all episodes).
             # We need a temporary episode reference for ensure_repository; we
@@ -216,7 +235,11 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
             # merkle hash computed locally, so HydraDB indexing lag can't fork
             # the chain. The first episode also anchors the Repository node.
             ep0 = await chain.next_episode(db, "ingest_commit")
-            repo_node, _repo_sid = await ingester.ensure_repository(owner, repo_name, ep0.id)
+            repo_node, _repo_sid = await ingester.ensure_repository(
+                owner, repo_name, ep0.id,
+                total_commits=total_commits,
+                ingested_commits=total,
+            )
 
             # --- Ingest loop ---
             for idx, commit_entry in enumerate(commits_meta):
@@ -274,6 +297,15 @@ def ingest(repo: str, sha: str | None, limit: int, prs: int, issues: int) -> Non
                     r = await ingester.ingest_issue(issue_data, repo_node.id, ep)
                     click.echo(f"  Issue #{r['number']} [{r['state']}] by {r['author']} — {r['title']}")
                     count += 1
+
+            # Coverage line — turn the limit into a trust signal.
+            if total_commits:
+                if total >= total_commits:
+                    click.echo(click.style(f"\n✓ Complete: ingested {total}/{total_commits} commits", fg="green"))
+                else:
+                    click.echo(click.style(f"\n◐ Sampled: ingested {total}/{total_commits} commits", fg="yellow"))
+            else:
+                click.echo(f"\nIngested {total} commits (run with --auto for a coverage estimate)")
 
         finally:
             await ingester.close()

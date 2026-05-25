@@ -85,14 +85,21 @@ class Repository(BaseNode):
     github_id: int | None = None
     default_branch: str = "main"
     language_breakdown: dict[str, float] = Field(default_factory=dict)
+    # Ingest coverage — turns the small-repo limit into a trust signal.
+    total_commits: int = 0      # total on default branch (0 = unknown)
+    ingested_commits: int = 0   # how many we actually ingested
 
     def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
         src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Repository:{self.name}"
         src["document_metadata"]["repo_name"] = self.name
         # HydraDB overwrites `content` with its own doc structure, so any field
-        # we need to read back MUST live in document_metadata.
+        # we need to read back MUST live in document_metadata (numbers as strings).
         src["document_metadata"]["default_branch"] = self.default_branch
+        src["document_metadata"]["total_commits"] = str(self.total_commits)
+        src["document_metadata"]["ingested_commits"] = str(self.ingested_commits)
+        complete = self.total_commits > 0 and self.ingested_commits >= self.total_commits
+        src["document_metadata"]["complete"] = complete
         if self.github_id is not None:
             src["document_metadata"]["github_id"] = str(self.github_id)
         return src

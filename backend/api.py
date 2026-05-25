@@ -518,6 +518,9 @@ async def list_repos():
                     "name": name,
                     "defaultBranch": dm.get("default_branch", ""),
                     "txTime": dm.get("tx_time", ""),
+                    "complete": bool(dm.get("complete", False)),
+                    "ingestedCommits": int(dm.get("ingested_commits", "0") or 0),
+                    "totalCommits": int(dm.get("total_commits", "0") or 0),
                 })
             pagination = raw.get("pagination") or raw.get("meta") or {}
             if not pagination.get("has_next", False):
@@ -531,10 +534,15 @@ async def list_repos():
             if existing is None:
                 by_name[r["name"]] = r
                 continue
-            # Replace if this one is newer or fills in a missing branch.
-            if (r.get("defaultBranch") and not existing.get("defaultBranch")) or (
-                r.get("txTime", "") > existing.get("txTime", "")
-            ):
+            # Prefer the entry with the richest info: completeness, then more
+            # ingested commits, then a branch, then most recent.
+            better = (
+                (r.get("complete") and not existing.get("complete"))
+                or (r.get("ingestedCommits", 0) > existing.get("ingestedCommits", 0))
+                or (r.get("defaultBranch") and not existing.get("defaultBranch"))
+                or (r.get("txTime", "") > existing.get("txTime", ""))
+            )
+            if better:
                 by_name[r["name"]] = r
         return {"repos": list(by_name.values())}
     except Exception as exc:

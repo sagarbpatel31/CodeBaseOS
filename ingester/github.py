@@ -69,6 +69,25 @@ class GitHubIngester:
     async def get_repo(self, owner: str, repo: str) -> dict[str, Any]:
         return await self._get(f"/repos/{owner}/{repo}")
 
+    async def count_commits(self, owner: str, repo: str) -> int:
+        """Total commit count on the default branch, via the Link header's
+        last-page number (per_page=1). 0 if it can't be determined."""
+        import re
+
+        try:
+            resp = await self._http.get(
+                f"/repos/{owner}/{repo}/commits", params={"per_page": 1}
+            )
+            resp.raise_for_status()
+            link = resp.headers.get("link", "") or resp.headers.get("Link", "")
+            m = re.search(r'[?&]page=(\d+)>;\s*rel="last"', link)
+            if m:
+                return int(m.group(1))
+            # No Link header → single page → count what's returned.
+            return len(resp.json() or [])
+        except Exception:
+            return 0
+
     async def get_commit(self, owner: str, repo: str, sha: str) -> dict[str, Any]:
         return await self._get(f"/repos/{owner}/{repo}/commits/{sha}")
 
@@ -124,6 +143,8 @@ class GitHubIngester:
         owner: str,
         repo: str,
         episode_id: UUID,
+        total_commits: int = 0,
+        ingested_commits: int = 0,
     ) -> tuple[Repository, str]:
         """
         Create (or return existing) Repository node.
@@ -137,6 +158,8 @@ class GitHubIngester:
             name=f"{owner}/{repo}",
             github_id=data.get("id"),
             default_branch=data.get("default_branch", "main"),
+            total_commits=total_commits,
+            ingested_commits=ingested_commits,
         )
         sid = await self.db.write_node(repo_node)
         return repo_node, sid

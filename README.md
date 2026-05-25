@@ -29,15 +29,22 @@ See `DEMO.md` for the full walkthrough.
 
 ## Use it on your own repo
 
-Point CodebaseOS at any GitHub repo in three steps:
+> **Best on small-to-medium repos.** CodebaseOS ingests a small repo *completely*
+> in seconds and shows you the coverage (`✓ complete: 38/38 commits`). Large
+> repos are **sampled** (latest N) and flagged honestly — still useful, just not
+> a full mirror. Pick a small repo to see it shine.
+
+Three steps:
 
 1. **Install the extension** — search "CodebaseOS" in VS Code, or
    `code --install-extension CodeBaseOS.codebaseos`.
 2. **Start the backend** — `make backend` (needs `HYDRADB_API_KEY`,
    `OPENAI_API_KEY`, `GITHUB_TOKEN` in `.env`). The extension talks to it at
    `http://localhost:8000` (configurable via `codebaseos.backendUrl`).
-3. **Open your repo in VS Code → run `CodebaseOS: Ingest this repo`** — the
-   `owner/name` is auto-detected from your git remote. Done.
+3. **Ingest** — either:
+   - in VS Code, run **`CodebaseOS: Ingest this repo`** (repo auto-detected), or
+   - from a terminal: **`cbos ingest owner/small-repo --auto`** — `--auto` sizes
+     the ingest to the repo: small repos ingested fully, large ones sampled.
 
 Now, in any file:
 
