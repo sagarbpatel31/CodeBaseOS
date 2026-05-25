@@ -1,8 +1,29 @@
 # CodebaseOS
 
+[![CI](https://github.com/sagarbpatel31/CodeBaseOS/actions/workflows/ci.yml/badge.svg)](https://github.com/sagarbpatel31/CodeBaseOS/actions/workflows/ci.yml)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/CodeBaseOS.codebaseos?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=CodeBaseOS.codebaseos)
+
 > **Right-click any line. Ask why. Get the full origin story across commits, PRs, issues, and decisions — in 200ms.**
 
 Built for **Agents Under Pressure — Build your own OS** (AI Valley, 48-hour hackathon).
+
+## Quick start
+
+```bash
+make setup          # deps (python venv + extension + dashboard)
+make demo           # offline demo → http://localhost:3000 (no creds, Merkle green)
+```
+
+Or live against HydraDB (needs `.env` — see `.env.example`):
+
+```bash
+make backend        # FastAPI on :8000
+make dash           # dashboard on :3000
+make ingest REPO=tokio-rs/tokio
+make verify         # ✓ Merkle chain intact
+```
+
+See `DEMO.md` for the full walkthrough.
 
 ---
 

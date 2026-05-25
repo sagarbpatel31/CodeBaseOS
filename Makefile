@@ -1,4 +1,4 @@
-.PHONY: setup hydradb-test test backend ingest webhooks extension-dev extension-pack dash demo-cold break verify cost publish submit
+.PHONY: setup hydradb-test test backend ingest webhooks extension-dev extension-pack dash demo demo-cold break verify cost publish submit
 
 # Install deps, set up venv, install extension dev deps
 setup:
@@ -26,16 +26,23 @@ ingest:
 webhooks:
 	@echo "TODO: implement — ngrok http 8000 & .venv/bin/python -m backend.webhooks"
 
-# Launch VS Code with the extension loaded
+# Compile + open VS Code with the extension loaded for debugging
 extension-dev:
-	@echo "TODO: implement — cd extension && npm run compile && code --extensionDevelopmentPath=\$$PWD .."
+	cd extension && npm run compile && code .
 
 # Package the .vsix for publishing
 extension-pack:
-	@echo "TODO: implement — cd extension && npx vsce package"
+	cd extension && npx vsce package
 
 # Start the dashboard dev server
 dash:
+	cd dashboard && npm run dev
+
+# One-command offline demo: deterministic clean graph, Merkle green, no creds.
+# Backend runs in the background; dashboard in the foreground (Ctrl-C stops it).
+demo:
+	@echo "CodebaseOS offline demo → http://localhost:3000  (backend :8000, Ctrl-C stops dashboard)"
+	CBOS_OFFLINE_DEMO=1 uvicorn backend.api:app --host 0.0.0.0 --port 8000 & \
 	cd dashboard && npm run dev
 
 # Clean DB, start everything, ingest the demo repos
@@ -54,9 +61,9 @@ verify:
 cost:
 	cbos cost
 
-# Publish extension to VS Code Marketplace (run only at hour 42+)
+# Publish extension to VS Code Marketplace (needs VSCE_PAT in env or .env)
 publish:
-	@echo "TODO: implement — cd extension && npx vsce publish"
+	cd extension && npx vsce publish -p "$$VSCE_PAT"
 
 # Generate final submission bundle
 submit:
