@@ -9,8 +9,14 @@ interface NodePanelProps {
   onClose: () => void;
 }
 
+interface Citation {
+  type: string;
+  title: string;
+  url: string;
+}
 interface WhyResult {
   explanation: string;
+  citations?: Citation[];
   context_nodes: number;
   cost_usd: number;
 }
@@ -21,6 +27,7 @@ interface Hop {
   title: string;
   detail: string;
   when: string;
+  url?: string;
 }
 interface VerifiedEdge {
   predicate: string;
@@ -105,6 +112,16 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
           {why && (
             <div className="text-gray-200 leading-relaxed">{why.explanation}</div>
           )}
+          {why && why.citations && why.citations.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1">
+              {why.citations.map((c, i) => (
+                <a key={i} href={c.url} target="_blank" rel="noreferrer"
+                   className="text-blue-300 hover:underline truncate">
+                  ↗ {c.type}: {c.title}
+                </a>
+              ))}
+            </div>
+          )}
 
           {prov && prov.chain.length > 0 && (
             <>
@@ -120,7 +137,16 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
                         {h.type}
                       </span>
                       {h.when && <span className="text-gray-600 ml-1">{h.when}</span>}
-                      <div className="text-gray-200">{h.title}</div>
+                      <div className="text-gray-200">
+                        {h.url ? (
+                          <a href={h.url} target="_blank" rel="noreferrer"
+                             className="text-blue-300 hover:underline">
+                            {h.title} ↗
+                          </a>
+                        ) : (
+                          h.title
+                        )}
+                      </div>
                       {h.detail && <div className="text-gray-500">{h.detail}</div>}
                     </div>
                   </li>

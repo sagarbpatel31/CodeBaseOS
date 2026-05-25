@@ -36,6 +36,42 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(hoverProvider);
 
+  // CodeLens: an inline "🧬 Why? · 📜 Origin" pair above each definition, so
+  // provenance is one click away where developers actually work.
+  const codeLensProvider = vscode.languages.registerCodeLensProvider(
+    { scheme: 'file' },
+    {
+      provideCodeLenses(document) {
+        const cfg = vscode.workspace.getConfiguration('codebaseos');
+        if (!cfg.get<boolean>('enableCodeLens', true)) return [];
+        const rel = vscode.workspace.asRelativePath(document.uri, false);
+        // Match common definition keywords across languages.
+        const defRe = /^\s*(?:pub\s+|export\s+|async\s+|public\s+|private\s+)*(?:fn|func|def|function|class|impl|struct|interface|trait|enum)\b/;
+        const lenses: vscode.CodeLens[] = [];
+        const max = 60; // cap to avoid clutter on huge files
+        for (let i = 0; i < document.lineCount && lenses.length < max * 2; i++) {
+          if (!defRe.test(document.lineAt(i).text)) continue;
+          const range = new vscode.Range(i, 0, i, 0);
+          const argsLine = i + 1;
+          lenses.push(
+            new vscode.CodeLens(range, {
+              title: '🧬 Why?',
+              command: 'codebaseos.why',
+              arguments: [{ file: rel, line: argsLine }],
+            }),
+            new vscode.CodeLens(range, {
+              title: '📜 Origin story',
+              command: 'codebaseos.provenance',
+              arguments: [{ file: rel, line: argsLine }],
+            })
+          );
+        }
+        return lenses;
+      },
+    }
+  );
+  context.subscriptions.push(codeLensProvider);
+
   // Command: codebaseos.why — call /why and render provenance in a webview.
   const whyCommand = vscode.commands.registerCommand(
     'codebaseos.why',
@@ -278,6 +314,9 @@ function showWhyPanel(
   .loc { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 12px; }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 18px 0 6px; }
   .explanation { font-size: 14px; line-height: 1.6; }
+  .cites { display: flex; flex-direction: column; gap: 4px; }
+  .cite { font-size: 12px; color: var(--vscode-textLink-foreground); text-decoration: none; }
+  .cite:hover { text-decoration: underline; }
   .meta { margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 12px; color: var(--vscode-descriptionForeground); display: flex; gap: 18px; }
   .badge { color: var(--vscode-charts-green); }
 </style></head>
@@ -285,6 +324,13 @@ function showWhyPanel(
   <div class="loc">${esc(result.file)}:${result.line}</div>
   <h2>Why does this code exist?</h2>
   <div class="explanation">${esc(result.explanation)}</div>
+  ${
+    (result.citations ?? []).length
+      ? `<h2>Sources</h2><div class="cites">${result.citations!
+          .map((c) => `<a class="cite" href="${esc(c.url)}">${esc(c.type)}: ${esc(c.title)}</a>`)
+          .join('')}</div>`
+      : ''
+  }
   <div class="meta">
     <span>context nodes: <span class="badge">${result.context_nodes}</span></span>
     <span>cost: <span class="badge">$${result.cost_usd.toFixed(6)}</span></span>
@@ -506,7 +552,9 @@ function showProvenancePanel(
         <div>
           <span class="badge" style="color:${color[h.type] ?? 'inherit'}">${_esc(h.type)}</span>
           ${h.when ? `<span class="when">${_esc(h.when)}</span>` : ''}
-          <div class="title">${_esc(h.title)}</div>
+          <div class="title">${
+            h.url ? `<a class="hoplink" href="${_esc(h.url)}">${_esc(h.title)} ↗</a>` : _esc(h.title)
+          }</div>
           ${h.detail ? `<div class="detail">${_esc(h.detail)}</div>` : ''}
         </div>
       </li>`
@@ -527,6 +575,8 @@ function showProvenancePanel(
   .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
   .when { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: 6px; }
   .title { font-size: 13px; margin-top: 2px; }
+  .hoplink { color: var(--vscode-textLink-foreground); text-decoration: none; }
+  .hoplink:hover { text-decoration: underline; }
   .detail { font-size: 12px; color: var(--vscode-descriptionForeground); }
   .verified li { font-size: 12px; color: var(--vscode-charts-green); margin: 2px 0; }
   .conf { color: var(--vscode-descriptionForeground); }

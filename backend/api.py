@@ -597,8 +597,34 @@ async def _synthesize(**kwargs) -> SynthesisResult:
         raise HTTPException(status_code=402, detail=str(exc))
 
 
-async def _recall_context(query: str, max_results: int = 8) -> tuple[str, int]:
-    """Semantic recall from HydraDB → (context_string, node_count)."""
+def _artifact_url(repo: str, node_type: str, text: str) -> str:
+    """Best-effort GitHub URL for a provenance artifact, so answers are
+    clickable instead of unverifiable prose."""
+    import re
+
+    if not repo or "/" not in repo:
+        return ""
+    base = f"https://github.com/{repo}"
+    t = (node_type or "").lower()
+    s = text or ""
+    if "pr" in t or "pull" in t:
+        m = re.search(r"#?(\d+)", s)
+        return f"{base}/pull/{m.group(1)}" if m else base
+    if "issue" in t:
+        m = re.search(r"#?(\d+)", s)
+        return f"{base}/issues/{m.group(1)}" if m else base
+    if "commit" in t:
+        m = re.search(r"\b([0-9a-f]{7,40})\b", s)
+        return f"{base}/commit/{m.group(1)}" if m else base
+    return ""
+
+
+async def _recall_context(query: str, max_results: int = 8) -> tuple[str, int, list[dict]]:
+    """Semantic recall from HydraDB → (context_string, node_count, sources).
+
+    `sources` is structured [{type, title}] for the recalled knowledge nodes,
+    used to attach clickable citations to answers.
+    """
     recall_result = await _db._client.recall.full_recall(
         tenant_id=_db.tenant_id,
         sub_tenant_id="default",
@@ -607,18 +633,21 @@ async def _recall_context(query: str, max_results: int = 8) -> tuple[str, int]:
         graph_context=True,
     )
     items: list[str] = []
+    structured: list[dict] = []
     sources = getattr(recall_result, "sources", None) or []
     chunks = getattr(recall_result, "chunks", None) or []
     for src in sources[:max_results]:
         title = getattr(src, "title", "") or ""
         am = getattr(src, "additional_metadata", {}) or {}
-        items.append(f"[{title} | type={am.get('node_type', '')}]")
+        ntype = am.get("node_type", "")
+        items.append(f"[{title} | type={ntype}]")
+        structured.append({"type": ntype, "title": title})
     for chunk in chunks[:max_results]:
         content = getattr(chunk, "chunk_content", "") or ""
         if content:
             items.append(content[:400])
     context = "\n\n".join(items) or "No relevant context found in the knowledge graph."
-    return context, len(sources) + len(chunks)
+    return context, len(sources) + len(chunks), structured
 
 
 @app.post("/resolve")
@@ -785,7 +814,7 @@ async def provenance(file: str, line: int = 1, repo: str = ""):
     # 2. Recall the surrounding provenance context and assemble an ordered chain.
     scope = f"In {repo}, " if repo else ""
     query = f"{scope}the full history of {file}: commits, PRs, issues, decisions, and people behind it."
-    context, ctx_count = await _recall_context(query, max_results=12)
+    context, ctx_count, _sources = await _recall_context(query, max_results=12)
     res = await _synthesize(
         call_source="provenance",
         cache_key=f"{repo}|{file}|{line}",
@@ -813,6 +842,8 @@ async def provenance(file: str, line: int = 1, repo: str = ""):
             "title": str(h.get("title", "")),
             "detail": str(h.get("detail", "")),
             "when": str(h.get("when", "")),
+            # Clickable: link each hop to its GitHub artifact when derivable.
+            "url": _artifact_url(repo, str(h.get("type", "")), str(h.get("title", ""))),
         }
         for i, h in enumerate(chain_hops[:6])
         if isinstance(h, dict)
@@ -879,7 +910,7 @@ async def why(file: str, line: int, repo: str = ""):
         query = f"In repository {repo}, {query}"
 
     try:
-        context, ctx_count = await _recall_context(query)
+        context, ctx_count, sources = await _recall_context(query)
         result = await _synthesize(
             call_source="why",
             cache_key=f"{repo}|{file}|{line}",
@@ -894,10 +925,23 @@ async def why(file: str, line: int, repo: str = ""):
             ),
             user=f"Question: {query}\n\nContext from knowledge graph:\n{context}",
         )
+        # Clickable citations: link recalled PR/Issue/Commit artifacts to GitHub.
+        citations = []
+        seen = set()
+        for s in sources:
+            t = s.get("type", "")
+            title = s.get("title", "")
+            if t not in ("PR", "Issue", "Commit"):
+                continue
+            url = _artifact_url(repo, t, title)
+            if url and url not in seen:
+                seen.add(url)
+                citations.append({"type": t, "title": title, "url": url})
         return {
             "file": file,
             "line": line,
             "explanation": result.text or "No explanation generated.",
+            "citations": citations[:6],
             "context_nodes": ctx_count,
             "cost_usd": round(result.cost_usd, 6),
             "cached": result.cached,
@@ -925,7 +969,7 @@ async def five_whys(file: str, line: int, repo: str = ""):
         query = f"In repository {repo}, {query}"
 
     try:
-        context, ctx_count = await _recall_context(query, max_results=10)
+        context, ctx_count, _sources = await _recall_context(query, max_results=10)
         result = await _synthesize(
             call_source="five-whys",
             cache_key=f"{repo}|{file}|{line}",
@@ -981,7 +1025,7 @@ async def summary(file: str, line: int, symbol: str = "", repo: str = ""):
     scope = f"In repository {repo}, " if repo else ""
     query = f"{scope}what does {target} do? Its purpose and behavior."
     try:
-        context, ctx_count = await _recall_context(query, max_results=6)
+        context, ctx_count, _sources = await _recall_context(query, max_results=6)
         result = await _synthesize(
             call_source="summary",
             cache_key=f"{repo}|{file}|{line}|{symbol}",
@@ -1064,7 +1108,7 @@ async def counterfactual(decision: str):
 
     query = f"What commits, PRs, files, and decisions relate to: {decision}?"
     try:
-        context, ctx_count = await _recall_context(query, max_results=10)
+        context, ctx_count, _sources = await _recall_context(query, max_results=10)
         result = await _synthesize(
             call_source="counterfactual",
             cache_key=decision,
@@ -1111,7 +1155,7 @@ async def handoff(module: str, repo: str = ""):
         f"shaped it, the people who worked on it, and any decisions behind it."
     )
     try:
-        context, ctx_count = await _recall_context(query, max_results=14)
+        context, ctx_count, _sources = await _recall_context(query, max_results=14)
         result = await _synthesize(
             call_source="handoff",
             cache_key=f"{repo}|{module}",

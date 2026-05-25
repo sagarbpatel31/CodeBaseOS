@@ -14,10 +14,17 @@ export interface SummaryResponse {
   summary: string;
 }
 
+export interface Citation {
+  type: string;
+  title: string;
+  url: string;
+}
+
 export interface WhyResponse {
   file: string;
   line: number;
   explanation: string;
+  citations?: Citation[];
   context_nodes: number;
   cost_usd: number;
 }
@@ -60,6 +67,7 @@ export interface ProvenanceHop {
   title: string;
   detail: string;
   when: string;
+  url?: string;
 }
 export interface VerifiedEdge {
   predicate: string;
