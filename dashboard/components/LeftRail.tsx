@@ -65,6 +65,9 @@ export function LeftRail() {
           </button>
         </div>
       </div>
+      <div className="px-3 py-1 text-[10px] text-gray-600 border-b border-gray-800/40">
+        Repos whose history is in the graph. Click <span className="text-green-400">+</span> to add one.
+      </div>
 
       {repos.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">

@@ -45,36 +45,33 @@ export function TopBar() {
       <div className="flex items-center gap-3">
         <span className="text-purple-400 font-bold">CodebaseOS</span>
         <span className="text-gray-600">|</span>
-        <span className="text-gray-400">Observability</span>
+        <span className="text-gray-400 hidden md:inline" title="Every commit, PR, issue, decision and person — graph-linked and Merkle-verified. Ask why any code exists.">
+          codebase memory
+        </span>
         <SearchBar />
       </div>
 
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-5">
+        <div className="flex items-center gap-1.5" title="OpenAI spend vs the hard $5 cap. Every answer logs its cost.">
           <span className="text-gray-500">cost</span>
           <span className="text-green-400">${cost.toFixed(4)}</span>
           <span className="text-gray-600">/</span>
           <span className="text-gray-400">${cap.toFixed(2)}</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title="Total nodes in the knowledge graph (commits, files, PRs, people, decisions…).">
           <span className="text-gray-500">nodes</span>
           <span className="text-blue-400">{nodes.toLocaleString()}</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title="Merkle chain integrity. ✓ = history is tamper-proof; ✗ = a node was altered.">
           <span className="text-gray-500">merkle</span>
           <span className={merkleOk ? "text-green-400" : "text-red-400"}>
-            {merkleOk ? "✓" : "✗"}
+            {merkleOk ? "✓ verified" : "✗ broken"}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <span className="text-gray-500">webhooks</span>
-          <span className="text-gray-500">—</span>
-        </div>
-
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title="Backend connection status.">
           <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-red-500"}`} />
           <span className={connected ? "text-green-400" : "text-red-400"}>
             {connected ? "live" : "offline"}

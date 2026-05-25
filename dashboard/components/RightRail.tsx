@@ -129,6 +129,9 @@ export function RightRail() {
             </button>
           </div>
         </div>
+        <div className="px-3 py-1 text-[10px] text-gray-600 border-b border-gray-800/40">
+          Merging duplicate identities of the same person across repos.
+        </div>
 
         <div className="flex-1 overflow-y-auto font-mono text-xs">
           {!er ? (
@@ -195,6 +198,9 @@ export function RightRail() {
         <div className="px-3 py-2 text-xs font-mono text-gray-500 uppercase tracking-wider border-b border-gray-800 shrink-0 flex items-center justify-between">
           <span>Webhook Firehose</span>
           {events.length > 0 && <span className="text-blue-400">{events.length}</span>}
+        </div>
+        <div className="px-3 py-1 text-[10px] text-gray-600 border-b border-gray-800/40 shrink-0">
+          Live ingestion — click +commit/+pr/+issue to stream new nodes in.
         </div>
 
         {/* Simulate triggers (demo stand-in for real GitHub webhooks) */}

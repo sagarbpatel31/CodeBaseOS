@@ -9,6 +9,8 @@ import { ForceGraph } from "@/components/ForceGraph";
 import { ChaosPanel } from "@/components/ChaosPanel";
 import { TimeSlider } from "@/components/TimeSlider";
 import { NodePanel } from "@/components/NodePanel";
+import { Legend } from "@/components/Legend";
+import { EmptyState } from "@/components/EmptyState";
 
 export default function Home() {
   const [asOf, setAsOf] = useState<string | null>(null);
@@ -25,6 +27,7 @@ export default function Home() {
             right rail off-screen (flexbox min-width:auto trap). */}
         <div className="relative flex-1 flex min-w-0 overflow-hidden">
           <ForceGraph graphData={graphData} onNodeClick={setSelected} dangerIds={dangerIds} />
+          {graphData.nodes.length === 0 ? <EmptyState /> : <Legend />}
           <ChaosPanel onHighlightChange={(ids) => setDangerIds(new Set(ids))} />
           <NodePanel node={selected} repo="" onClose={() => setSelected(null)} />
           <TimeSlider

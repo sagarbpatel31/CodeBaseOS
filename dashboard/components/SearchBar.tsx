@@ -51,15 +51,27 @@ export function SearchBar() {
     setLoading(false);
   }
 
+  function runExample(example: string) {
+    setQ(example);
+    // run on next tick so the input reflects the chosen example
+    setTimeout(() => run(), 0);
+  }
+
+  const EXAMPLES = [
+    "why was create_dir_all changed",
+    "how does the scheduler work",
+    "what touches the timer",
+  ];
+
   return (
     <div ref={boxRef} className="relative">
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && run()}
-        onFocus={() => results.length && setOpen(true)}
-        placeholder="ask the graph…"
-        className="w-64 bg-gray-800/70 border border-gray-700 rounded px-2 py-1
+        onFocus={() => setOpen(true)}
+        placeholder="ask the graph…  e.g. why was X changed?"
+        className="w-72 bg-gray-800/70 border border-gray-700 rounded px-2 py-1
                    text-xs font-mono text-gray-200 placeholder:text-gray-600
                    focus:outline-none focus:border-purple-500"
       />
@@ -69,6 +81,21 @@ export function SearchBar() {
                         bg-gray-900 border border-gray-700 rounded-lg shadow-xl font-mono text-xs">
           {loading ? (
             <div className="px-3 py-3 text-gray-500">searching…</div>
+          ) : !q.trim() ? (
+            <div className="px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">
+                Try asking
+              </div>
+              {EXAMPLES.map((ex) => (
+                <button
+                  key={ex}
+                  onClick={() => runExample(ex)}
+                  className="block w-full text-left text-gray-300 hover:text-purple-300 py-1"
+                >
+                  → {ex}
+                </button>
+              ))}
+            </div>
           ) : results.length === 0 ? (
             <div className="px-3 py-3 text-gray-600">no matches</div>
           ) : (
