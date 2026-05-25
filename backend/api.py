@@ -1194,6 +1194,102 @@ async def handoff(module: str, repo: str = ""):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/explain-file")
+async def explain_file(file: str, repo: str = ""):
+    """Plain-English overview of an entire FILE: what it does, who owns it, key
+    points, and the decisions that shaped it. The fastest 'understand this code'
+    surface for a developer new to a file."""
+    if _db is None:
+        # Offline demo: a deterministic canned explainer (no creds needed).
+        return {
+            "file": file,
+            "summary": f"{file} is part of the demo fixture. Ingest a real repo for a live explanation.",
+            "owner": "",
+            "key_points": [],
+            "key_decisions": [],
+            "context_nodes": 0,
+            "cost_usd": 0.0,
+            "cached": True,
+        }
+    import json as _json
+
+    scope = f"in {repo}, " if repo else ""
+    query = (
+        f"{scope}what does the file {file} do, who works on it most, and what "
+        f"commits, PRs, or decisions shaped it?"
+    )
+    try:
+        context, ctx_count, _sources = await _recall_context(query, max_results=12)
+        result = await _synthesize(
+            call_source="explain-file",
+            cache_key=f"{repo}|{file}",
+            max_tokens=450,
+            response_format={"type": "json_object"},
+            system=(
+                "You are CodebaseOS. Explain an entire FILE for a developer seeing it for the "
+                "first time, grounded in the knowledge-graph context. Respond as JSON: "
+                '{"summary": "what the file does, 2-3 sentences", '
+                '"owner": "the person who most works on it, or \'\'", '
+                '"key_points": ["..."], "key_decisions": ["..."]}. '
+                "Cite real people/PRs/commits from the context; do not invent."
+            ),
+            user=f"File: {file}\n\nKnowledge graph context:\n{context}",
+        )
+        try:
+            d = _json.loads(result.text or "{}")
+            if not isinstance(d, dict):
+                d = {}
+        except Exception:
+            d = {}
+        return {
+            "file": file,
+            "summary": str(d.get("summary", "")),
+            "owner": str(d.get("owner", "")),
+            "key_points": [str(x) for x in (d.get("key_points") or [])][:6],
+            "key_decisions": [str(x) for x in (d.get("key_decisions") or [])][:6],
+            "context_nodes": ctx_count,
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/diff")
+async def diff(repo: str = "", since: str = "", until: str = "", file: str = ""):
+    """What changed in a time window (bi-temporal): commits, PRs, and issues
+    whose valid_time falls in [since, until]. Optional `file` narrows by title.
+    No LLM — pure graph counts, so it's free and instant."""
+    if _db is None:
+        return {"since": since, "until": until, "changes": [], "count": 0}
+    # ISO-8601 sorts lexicographically; open-ended bounds when blank.
+    lo = since or "0000"
+    hi = until or "9999"
+    needle = (file.rsplit("/", 1)[-1] or "").lower()
+    changes: list[dict] = []
+    for ntype in ("Commit", "PR", "Issue"):
+        for n in await _db.list_nodes_by_type(ntype):
+            dm = n["dm"]
+            vt = dm.get("valid_time", "") or dm.get("tx_time", "")
+            if not vt or vt < lo or vt > hi:
+                continue
+            title = n.get("title", "")
+            if needle and needle not in title.lower():
+                continue
+            changes.append({"type": ntype, "title": title, "when": vt})
+    changes.sort(key=lambda c: c["when"])
+    return {
+        "repo": repo,
+        "since": since,
+        "until": until,
+        "file": file,
+        "count": len(changes),
+        "changes": changes[:50],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Webhook firehose — live ingestion feed
 # ---------------------------------------------------------------------------

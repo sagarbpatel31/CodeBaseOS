@@ -82,6 +82,29 @@ export interface ProvenanceResponse {
   context_nodes: number;
   cost_usd: number;
 }
+export interface ExplainFileResponse {
+  file: string;
+  summary: string;
+  owner: string;
+  key_points: string[];
+  key_decisions: string[];
+  context_nodes: number;
+  cost_usd: number;
+}
+
+export interface DiffChange {
+  type: string;
+  title: string;
+  when: string;
+}
+export interface DiffResponse {
+  since: string;
+  until: string;
+  file: string;
+  count: number;
+  changes: DiffChange[];
+}
+
 export interface BusFactorResponse {
   repo: string;
   contributors: { name: string; commits: number }[];
@@ -220,6 +243,33 @@ export class CodebaseOSClient {
       throw new Error(`Ingest failed: ${response.status}`);
     }
     return (await response.json()) as { repo: string; ingested: Record<string, number> };
+  }
+
+  async explainFile(file: string, repo = ''): Promise<ExplainFileResponse> {
+    const params = new URLSearchParams({ file });
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/explain-file?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Explain-file request failed: ${response.status}`);
+    }
+    return (await response.json()) as ExplainFileResponse;
+  }
+
+  async diff(opts: { repo?: string; since: string; until: string; file?: string }): Promise<DiffResponse> {
+    const params = new URLSearchParams({ since: opts.since, until: opts.until });
+    if (opts.repo) params.set('repo', opts.repo);
+    if (opts.file) params.set('file', opts.file);
+    const response = await fetch(`${this.baseUrl}/diff?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Diff request failed: ${response.status}`);
+    }
+    return (await response.json()) as DiffResponse;
   }
 
   async busFactor(repo = ''): Promise<BusFactorResponse> {

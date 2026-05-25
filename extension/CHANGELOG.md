@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- **Explain this file** — plain-English overview of an entire file: what it
+  does, who owns it, key points and decisions.
+- **What changed** — everything that touched a file/repo in a date range
+  (bi-temporal), no LLM.
+- **Copy as Markdown** — export a Why / Origin-story answer (with citations) to
+  paste into a PR or doc.
+
 ## 0.2.1
 
 - **First-run walkthrough**: a guided "Get started with CodebaseOS" (start

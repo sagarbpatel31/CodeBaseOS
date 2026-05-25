@@ -27,6 +27,31 @@ See `DEMO.md` for the full walkthrough.
 
 ---
 
+## Use it on your own repo
+
+Point CodebaseOS at any GitHub repo in three steps:
+
+1. **Install the extension** — search "CodebaseOS" in VS Code, or
+   `code --install-extension CodeBaseOS.codebaseos`.
+2. **Start the backend** — `make backend` (needs `HYDRADB_API_KEY`,
+   `OPENAI_API_KEY`, `GITHUB_TOKEN` in `.env`). The extension talks to it at
+   `http://localhost:8000` (configurable via `codebaseos.backendUrl`).
+3. **Open your repo in VS Code → run `CodebaseOS: Ingest this repo`** — the
+   `owner/name` is auto-detected from your git remote. Done.
+
+Now, in any file:
+
+- **Hover a line** or click the **🧬 Why? · 📜 Origin story** CodeLens → a
+  graph-grounded answer with **clickable links to the real PR / commit / issue**.
+- **CodebaseOS: Explain this file** → what it does, who owns it, key decisions.
+- **CodebaseOS: What changed** → everything that touched it in a date range.
+- **CodebaseOS: Bus factor** → who holds the knowledge, and the risk if they leave.
+- Any answer → **Copy as Markdown** to paste into a PR or doc.
+
+No graph database to operate, no query language to learn — just ask.
+
+---
+
 ## The Problem
 
 Every engineer has asked *"why is this code here?"* and gotten silence.

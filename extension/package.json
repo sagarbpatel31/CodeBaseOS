@@ -2,7 +2,7 @@
   "name": "codebaseos",
   "displayName": "CodebaseOS",
   "description": "Right-click any line. Ask why. Get the real answer.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "CodeBaseOS",
   "engines": {
     "vscode": "^1.85.0"
@@ -37,6 +37,14 @@
       {
         "command": "codebaseos.busFactor",
         "title": "CodebaseOS: Bus factor (knowledge risk)"
+      },
+      {
+        "command": "codebaseos.explainFile",
+        "title": "CodebaseOS: Explain this file"
+      },
+      {
+        "command": "codebaseos.diff",
+        "title": "CodebaseOS: What changed (time window)"
       },
       {
         "command": "codebaseos.fiveWhys",

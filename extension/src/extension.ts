@@ -46,6 +46,16 @@ async function guideOnError(message: string): Promise<void> {
   }
 }
 
+/** Offer to copy a generated answer as Markdown — so a dev can paste the cited
+ *  provenance straight into a PR description or doc. */
+async function offerCopy(summary: string, markdown: string): Promise<void> {
+  const pick = await vscode.window.showInformationMessage(summary, 'Copy as Markdown');
+  if (pick === 'Copy as Markdown') {
+    await vscode.env.clipboard.writeText(markdown);
+    void vscode.window.showInformationMessage('Copied to clipboard.');
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('codebaseos');
   const backendUrl = config.get<string>('backendUrl', 'http://localhost:8000');
@@ -137,6 +147,12 @@ export function activate(context: vscode.ExtensionContext): void {
           try {
             const result = await client.why(file!, line!, repo);
             showWhyPanel(context, result);
+            const md =
+              `## Why — ${result.file}:${result.line}\n\n${result.explanation}\n` +
+              ((result.citations ?? []).length
+                ? `\n### Sources\n${result.citations!.map((c) => `- [${c.type}] ${c.title} — ${c.url}`).join('\n')}\n`
+                : '');
+            void offerCopy('Why explanation ready.', md);
           } catch (err) {
             await guideOnError(
               `CodebaseOS /why failed: ${err instanceof Error ? err.message : String(err)}. ` +
@@ -208,6 +224,21 @@ export function activate(context: vscode.ExtensionContext): void {
           try {
             const result = await client.provenance(file!, line!, repo);
             showProvenancePanel(context, result);
+            const md =
+              `## Origin story — ${result.file}:${result.line}\n\n` +
+              result.chain
+                .map(
+                  (h) =>
+                    `${h.order}. **${h.type}**${h.when ? ` (${h.when})` : ''} — ${h.title}` +
+                    `${h.url ? ` (${h.url})` : ''}${h.detail ? `\n   ${h.detail}` : ''}`
+                )
+                .join('\n') +
+              (result.verified_edges.length
+                ? `\n\n### Verified edges\n${result.verified_edges
+                    .map((e) => `- ${e.context} (conf ${e.confidence})`)
+                    .join('\n')}`
+                : '');
+            void offerCopy('Origin story ready.', md);
           } catch (err) {
             await guideOnError(
               `CodebaseOS Provenance failed: ${err instanceof Error ? err.message : String(err)}. ` +
@@ -219,6 +250,73 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
   context.subscriptions.push(provenanceCommand);
+
+  // Command: codebaseos.explainFile — plain-English overview of the open file.
+  const explainFileCommand = vscode.commands.registerCommand('codebaseos.explainFile', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      void vscode.window.showInformationMessage('Open a file to explain.');
+      return;
+    }
+    const file = vscode.workspace.asRelativePath(editor.document.uri, false);
+    const repo = await resolveRepo();
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: explaining ${file}…` },
+      async () => {
+        try {
+          const r = await client.explainFile(file, repo);
+          showExplainFilePanel(context, r);
+        } catch (err) {
+          await guideOnError(
+            `CodebaseOS Explain-file failed: ${err instanceof Error ? err.message : String(err)}. ` +
+              `Backend at ${backendUrl} — running, and this repo ingested?`
+          );
+        }
+      }
+    );
+  });
+  context.subscriptions.push(explainFileCommand);
+
+  // Command: codebaseos.diff — what changed in a time window (bi-temporal).
+  const diffCommand = vscode.commands.registerCommand('codebaseos.diff', async () => {
+    const repo = await resolveRepo();
+    const file = vscode.window.activeTextEditor
+      ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri, false)
+      : '';
+    const since = await vscode.window.showInputBox({
+      prompt: 'Changed since (YYYY-MM-DD)',
+      value: new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10),
+    });
+    if (!since) return;
+    const until = await vscode.window.showInputBox({
+      prompt: 'Changed until (YYYY-MM-DD)',
+      value: new Date().toISOString().slice(0, 10),
+    });
+    if (!until) return;
+    const scopeAll = await vscode.window.showQuickPick(['Whole repo', 'This file only'], {
+      placeHolder: 'Scope of the diff',
+    });
+    if (!scopeAll) return;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'CodebaseOS: computing what changed…' },
+      async () => {
+        try {
+          const r = await client.diff({
+            repo,
+            since,
+            until,
+            file: scopeAll === 'This file only' ? file : '',
+          });
+          showDiffPanel(context, r);
+        } catch (err) {
+          await guideOnError(
+            `CodebaseOS Diff failed: ${err instanceof Error ? err.message : String(err)}.`
+          );
+        }
+      }
+    );
+  });
+  context.subscriptions.push(diffCommand);
 
   // Command: codebaseos.busFactor — knowledge-risk ranking.
   const busFactorCommand = vscode.commands.registerCommand('codebaseos.busFactor', async () => {
@@ -671,6 +769,96 @@ function showProvenancePanel(
   <div class="meta">${r.context_nodes} context nodes · cost: $${r.cost_usd.toFixed(6)}</div>
 </body></html>`;
   provenancePanel.reveal(vscode.ViewColumn.Beside);
+}
+
+let explainFilePanel: vscode.WebviewPanel | undefined;
+
+function showExplainFilePanel(
+  context: vscode.ExtensionContext,
+  r: import('./client').ExplainFileResponse
+): void {
+  if (!explainFilePanel) {
+    explainFilePanel = vscode.window.createWebviewPanel(
+      'codebaseosExplainFile',
+      'CodebaseOS — Explain File',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    explainFilePanel.onDidDispose(() => (explainFilePanel = undefined), null, context.subscriptions);
+  }
+  const list = (items: string[]) =>
+    items.length ? `<ul>${items.map((x) => `<li>${_esc(x)}</li>`).join('')}</ul>` : '<p class="empty">—</p>';
+  explainFilePanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  .loc { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 12px; }
+  .summary { font-size: 14px; line-height: 1.6; margin: 10px 0; }
+  .owner { font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .owner b { color: var(--vscode-charts-red); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 16px 0 4px; }
+  li { font-size: 13px; line-height: 1.5; }
+  .empty { color: var(--vscode-descriptionForeground); }
+  .meta { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); }
+</style></head>
+<body>
+  <div class="loc">${_esc(r.file)}</div>
+  <div class="summary">${_esc(r.summary)}</div>
+  ${r.owner ? `<div class="owner">Owner: <b>${_esc(r.owner)}</b></div>` : ''}
+  <h2>Key points</h2>${list(r.key_points)}
+  <h2>Key decisions</h2>${list(r.key_decisions)}
+  <div class="meta">${r.context_nodes} context nodes · cost: $${r.cost_usd.toFixed(6)}</div>
+</body></html>`;
+  explainFilePanel.reveal(vscode.ViewColumn.Beside);
+}
+
+let diffPanel: vscode.WebviewPanel | undefined;
+
+function showDiffPanel(
+  context: vscode.ExtensionContext,
+  r: import('./client').DiffResponse
+): void {
+  if (!diffPanel) {
+    diffPanel = vscode.window.createWebviewPanel(
+      'codebaseosDiff',
+      'CodebaseOS — What Changed',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    diffPanel.onDidDispose(() => (diffPanel = undefined), null, context.subscriptions);
+  }
+  const color: Record<string, string> = {
+    Commit: 'var(--vscode-charts-blue)',
+    PR: 'var(--vscode-charts-purple)',
+    Issue: 'var(--vscode-charts-yellow)',
+  };
+  const rows = r.changes
+    .map(
+      (c) => `<li>
+        <span class="badge" style="color:${color[c.type] ?? 'inherit'}">${_esc(c.type)}</span>
+        <span class="when">${_esc(c.when.slice(0, 10))}</span>
+        <span class="t">${_esc(c.title)}</span>
+      </li>`
+    )
+    .join('');
+  diffPanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  h2 { font-size: 13px; }
+  .range { font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 12px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .badge { font-size: 10px; text-transform: uppercase; width: 56px; flex: 0 0 56px; }
+  .when { font-family: var(--vscode-editor-font-family); color: var(--vscode-descriptionForeground); font-size: 11px; flex: 0 0 80px; }
+  .t { flex: 1; }
+</style></head>
+<body>
+  <h2>What changed${r.file ? ` in ${_esc(r.file)}` : ''}</h2>
+  <div class="range">${_esc(r.since)} → ${_esc(r.until)} · ${r.count} change(s)</div>
+  <ul>${rows || '<li>No changes in this window.</li>'}</ul>
+</body></html>`;
+  diffPanel.reveal(vscode.ViewColumn.Beside);
 }
 
 export function deactivate(): void {
