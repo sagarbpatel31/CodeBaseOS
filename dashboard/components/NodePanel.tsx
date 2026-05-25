@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { GraphNode } from "@/hooks/useGraphData";
+import { Typewriter } from "@/components/Typewriter";
 
 interface NodePanelProps {
   node: GraphNode | null;
@@ -248,7 +249,11 @@ export function NodePanel({ node, repo, onClose }: NodePanelProps) {
           <SectionLabel text="Why does this exist?" color="text-gray-500 mt-0" />
           {loading && <div className="text-gray-500">synthesizing…</div>}
           {err && <div className="text-red-400">backend error: {err}</div>}
-          {why && <div className="text-gray-200 leading-relaxed">{why.explanation}</div>}
+          {why && (
+            <div className="text-gray-200 leading-relaxed">
+              <Typewriter text={why.explanation} />
+            </div>
+          )}
           {why?.citations?.length ? (
             <div className="mt-2 flex flex-col gap-1">
               {why.citations.map((c, i) => (

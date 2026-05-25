@@ -108,7 +108,13 @@ export function ForceGraph({ graphData, onNodeClick, dangerIds, focusId }: Force
         onNodeClick={(node: NodeWithPos) => onNodeClick?.(node)}
         nodeCanvasObject={nodeCanvasObject}
         nodeCanvasObjectMode={() => "replace"}
-        linkColor={() => "#374151"}
+        // Merkle spine: the episode chain (prev links) glows cyan with flowing
+        // particles — integrity made visible. Everything else stays muted gray.
+        linkColor={(l: { label?: string }) => (l.label === "prev" ? "#22D3EE" : "#374151")}
+        linkWidth={(l: { label?: string }) => (l.label === "prev" ? 2.5 : 1)}
+        linkDirectionalParticles={(l: { label?: string }) => (l.label === "prev" ? 3 : 0)}
+        linkDirectionalParticleColor={() => "#67E8F9"}
+        linkDirectionalParticleWidth={2.5}
         linkDirectionalArrowLength={3}
         linkDirectionalArrowRelPos={1}
         backgroundColor="#030712"

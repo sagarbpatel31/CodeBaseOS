@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Typewriter } from "@/components/Typewriter";
 
 interface Citation {
   type: string;
@@ -82,7 +83,9 @@ export function AskPanel() {
               {turns.map((t, i) => (
                 <div key={i}>
                   <div className="text-gray-400">› {t.q}</div>
-                  <div className="text-gray-100 leading-relaxed mt-1">{t.answer}</div>
+                  <div className="text-gray-100 leading-relaxed mt-1">
+                    {i === turns.length - 1 ? <Typewriter text={t.answer} /> : t.answer}
+                  </div>
                   {t.citations.length > 0 && (
                     <div className="mt-1.5 flex flex-col gap-0.5">
                       {t.citations.map((c, j) => (
