@@ -77,6 +77,8 @@ export function RightRail() {
     return () => clearInterval(id);
   }, []);
 
+  const [resolving, setResolving] = useState(false);
+
   async function simulate(kind: string) {
     setFiring(true);
     try {
@@ -89,6 +91,18 @@ export function RightRail() {
     setFiring(false);
   }
 
+  async function resolve() {
+    setResolving(true);
+    try {
+      await fetch("/api/backend/resolve", { method: "POST" });
+      const res = await fetch("/api/backend/er-queue");
+      if (res.ok) setEr(await res.json());
+    } catch {
+      // backend offline
+    }
+    setResolving(false);
+  }
+
   const stats = er?.stats;
   const merged = (er?.clusters ?? []).filter((c) => c.identity_ids.length > 1);
   const pending = er?.pending ?? [];
@@ -99,11 +113,21 @@ export function RightRail() {
       <div className="flex-1 flex flex-col border-b border-gray-700 overflow-hidden">
         <div className="px-3 py-2 text-xs font-mono text-gray-500 uppercase tracking-wider border-b border-gray-800 shrink-0 flex items-center justify-between">
           <span>Entity Resolution</span>
-          {stats && (
-            <span className="text-blue-400">
-              {stats.identities}→{stats.people}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {stats && (
+              <span className="text-blue-400">
+                {stats.identities}→{stats.people}
+              </span>
+            )}
+            <button
+              onClick={resolve}
+              disabled={resolving}
+              title="Persist Person nodes for merged identities"
+              className="text-purple-400 hover:text-purple-300 disabled:opacity-40 normal-case"
+            >
+              {resolving ? "…" : "resolve"}
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto font-mono text-xs">

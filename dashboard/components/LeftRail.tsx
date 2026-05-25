@@ -12,32 +12,58 @@ interface Repo {
 export function LeftRail() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+
+  async function fetchRepos() {
+    try {
+      const res = await fetch("/api/backend/repos");
+      if (res.ok) {
+        const data = await res.json();
+        setRepos(data.repos ?? []);
+      }
+    } catch {
+      // backend offline — leave list empty
+    }
+    setLoaded(true);
+  }
 
   useEffect(() => {
-    async function fetchRepos() {
-      try {
-        const res = await fetch("/api/backend/repos");
-        if (res.ok) {
-          const data = await res.json();
-          setRepos(data.repos ?? []);
-        }
-      } catch {
-        // backend offline — leave list empty
-      }
-      setLoaded(true);
-    }
     fetchRepos();
     const id = setInterval(fetchRepos, 5000);
     return () => clearInterval(id);
   }, []);
 
+  async function addRepo() {
+    const repo = window.prompt("Ingest repo (owner/name):", "tokio-rs/mio");
+    if (!repo || !repo.includes("/")) return;
+    setIngesting(true);
+    try {
+      await fetch(
+        `/api/backend/repos?repo=${encodeURIComponent(repo)}&commits=5&prs=3`,
+        { method: "POST" }
+      );
+      await fetchRepos();
+    } catch {
+      // backend offline
+    }
+    setIngesting(false);
+  }
+
   return (
     <aside className="w-56 shrink-0 bg-gray-900 border-r border-gray-700 flex flex-col overflow-hidden">
       <div className="px-3 py-2 text-xs font-mono text-gray-500 uppercase tracking-wider border-b border-gray-800 flex items-center justify-between">
         <span>Ingested Repos</span>
-        {repos.length > 0 && (
-          <span className="text-blue-400">{repos.length}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {repos.length > 0 && <span className="text-blue-400">{repos.length}</span>}
+          <button
+            onClick={addRepo}
+            disabled={ingesting}
+            title="Ingest a repository"
+            className="text-purple-400 hover:text-purple-300 disabled:opacity-40"
+          >
+            {ingesting ? "…" : "+"}
+          </button>
+        </div>
       </div>
 
       {repos.length === 0 ? (
