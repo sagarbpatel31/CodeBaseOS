@@ -52,6 +52,46 @@ No graph database to operate, no query language to learn — just ask.
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph editor["VS Code"]
+    EXT["Extension<br/>hover · CodeLens · webviews"]
+  end
+  DASH["Dashboard<br/>force graph · chaos · time-travel"]
+
+  subgraph backend["FastAPI backend"]
+    API["API<br/>/why /provenance /diff<br/>/explain-file /bus-factor /decisions"]
+    SYN["Synthesizer<br/>single LLM chokepoint · $5 hard cap"]
+    CHAIN["Merkle chain pointer<br/>fork-proof, file-locked"]
+  end
+
+  GH["GitHub API"]
+  HDB[("HydraDB<br/>bi-temporal knowledge graph")]
+  OAI["OpenAI<br/>gpt-4o-mini"]
+
+  EXT -->|HTTP| API
+  DASH -->|HTTP / WS| API
+  GH -->|ingest commits / PRs / issues| API
+  API -->|nodes + edges| HDB
+  API --> CHAIN
+  API --> SYN
+  SYN -->|capped · cached| OAI
+  SYN -->|CostEvent| HDB
+  HDB -->|recall + graph edges| API
+```
+
+- **Ingestion** pulls commits, PRs, issues, reviews and people from GitHub into
+  a **bi-temporal** graph in HydraDB; every write extends a **Merkle chain**
+  (verifiable, tamper-evident).
+- **All LLM calls** funnel through one **Synthesizer** with a hard **$5 cap** and
+  response caching; every paid call logs a `CostEvent` to the graph.
+- The **extension** and **dashboard** only ever talk to the backend over HTTP —
+  no secrets in the client.
+
+---
+
 ## The Problem
 
 Every engineer has asked *"why is this code here?"* and gotten silence.

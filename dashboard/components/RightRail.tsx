@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/Skeleton";
 
 interface ClusterMember {
   id: string;
@@ -135,9 +136,7 @@ export function RightRail() {
 
         <div className="flex-1 overflow-y-auto font-mono text-xs">
           {!er ? (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-gray-600">Loading&hellip;</p>
-            </div>
+            <Skeleton rows={4} />
           ) : (
             <>
               {/* Review queue */}

@@ -914,6 +914,7 @@ async def decisions(repo: str = ""):
         m = re.search(r"(\d+)", did)
         url = f"https://github.com/{repo}/pull/{m.group(1)}" if (repo and m) else ""
         out.append({
+            "id": d["id"],  # graph node id, so the dashboard can focus it
             "decision_id": did,
             "summary": summary,
             "confidence": dm.get("confidence", ""),

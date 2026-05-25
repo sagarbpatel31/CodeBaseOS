@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/Skeleton";
 
 interface Repo {
   id: string;
@@ -10,6 +11,7 @@ interface Repo {
 }
 
 interface Decision {
+  id: string;
   decision_id: string;
   summary: string;
   confidence: string;
@@ -20,6 +22,7 @@ export function LeftRail() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [decisionsLoaded, setDecisionsLoaded] = useState(false);
   const [ingesting, setIngesting] = useState(false);
 
   async function fetchRepos() {
@@ -42,6 +45,13 @@ export function LeftRail() {
     } catch {
       /* offline */
     }
+    setDecisionsLoaded(true);
+  }
+
+  function focusNode(id: string, title: string) {
+    window.dispatchEvent(
+      new CustomEvent("cbos-focus", { detail: { id, nodeType: "Decision", title } })
+    );
   }
 
   useEffect(() => {
@@ -90,10 +100,12 @@ export function LeftRail() {
         Repos whose history is in the graph. Click <span className="text-green-400">+</span> to add one.
       </div>
 
-      {repos.length === 0 ? (
+      {!loaded ? (
+        <Skeleton rows={2} />
+      ) : repos.length === 0 ? (
         <div className="px-4 py-6 text-center">
           <p className="text-xs text-gray-600">
-            {loaded ? "No repos ingested yet." : "Loading…"}
+            No repos ingested yet.
             <br />
             Run <span className="text-purple-400">cbos ingest</span> to start.
           </p>
@@ -126,7 +138,9 @@ export function LeftRail() {
         Architectural decisions mined from PRs.
       </div>
       <div className="flex-1 overflow-y-auto font-mono text-xs">
-        {decisions.length === 0 ? (
+        {!decisionsLoaded ? (
+          <Skeleton rows={3} />
+        ) : decisions.length === 0 ? (
           <p className="text-[11px] text-gray-600 px-3 py-2">
             None yet — run <span className="text-purple-400">CodebaseOS: Extract decisions</span> or{" "}
             <span className="text-purple-400">cbos</span> ingest with PRs.
@@ -134,14 +148,25 @@ export function LeftRail() {
         ) : (
           <ul>
             {decisions.map((d) => (
-              <li key={d.decision_id} className="px-3 py-2 border-b border-gray-800/50 hover:bg-gray-800/40">
+              <li
+                key={d.decision_id}
+                onClick={() => focusNode(d.id, d.summary || d.decision_id)}
+                title="Focus this decision in the graph"
+                className="px-3 py-2 border-b border-gray-800/50 hover:bg-gray-800/40 cursor-pointer"
+              >
                 <div className="flex items-center gap-1.5">
                   <span className="text-cyan-400 text-[10px] uppercase">{d.decision_id}</span>
                   {d.confidence && <span className="text-gray-600 text-[10px]">{d.confidence}</span>}
                 </div>
                 <div className="text-gray-200 mt-0.5 leading-snug">{d.summary}</div>
                 {d.url && (
-                  <a href={d.url} target="_blank" rel="noreferrer" className="text-blue-300 hover:underline text-[10px]">
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-blue-300 hover:underline text-[10px]"
+                  >
                     ↗ view PR
                   </a>
                 )}
