@@ -228,21 +228,34 @@ export class CodebaseOSClient {
 
   async ingestRepo(
     repo: string,
-    opts: { commits?: number; prs?: number; issues?: number } = {}
-  ): Promise<{ repo: string; ingested: Record<string, number> }> {
+    opts: { commits?: number; prs?: number; issues?: number; auto?: boolean } = {}
+  ): Promise<{
+    repo: string;
+    ingested: Record<string, number>;
+    total_commits?: number;
+    ingested_commits?: number;
+    complete?: boolean;
+  }> {
     const params = new URLSearchParams({ repo });
+    if (opts.auto) params.set('auto', '1');
     if (opts.commits != null) params.set('commits', String(opts.commits));
     if (opts.prs != null) params.set('prs', String(opts.prs));
     if (opts.issues != null) params.set('issues', String(opts.issues));
     const response = await fetch(`${this.baseUrl}/repos?${params}`, {
       method: 'POST',
       headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(180_000),
     });
     if (!response.ok) {
       throw new Error(`Ingest failed: ${response.status}`);
     }
-    return (await response.json()) as { repo: string; ingested: Record<string, number> };
+    return (await response.json()) as {
+      repo: string;
+      ingested: Record<string, number>;
+      total_commits?: number;
+      ingested_commits?: number;
+      complete?: boolean;
+    };
   }
 
   async explainFile(file: string, repo = ''): Promise<ExplainFileResponse> {

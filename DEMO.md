@@ -78,6 +78,24 @@ Dashboard: http://localhost:3000 · Backend: http://localhost:8000
 9. **Onboarding tour** — VS Code *Generate onboarding tour for current module*:
    overview, where to start, key files / people / decisions for a module.
 
+## Curated demo repos (de-risked)
+
+Two pre-tested repos so rehearsal never surprises you:
+
+- **Substance** — `tokio-rs/tokio` (already ingested, sampled): rich `/why`,
+  extracted **decisions** (PR #8169 …), provenance chains, bus-factor. Use it
+  for the headline answers.
+- **Completeness** — `octocat/Hello-World`: tiny, ingests **fully** in seconds
+  and shows the coverage trust badge:
+  ```bash
+  make demo-ingest          # cbos ingest octocat/Hello-World --auto
+  # → ✓ Complete: ingested 3/3 commits   (dashboard shows "✓ complete 3/3")
+  ```
+  Or in VS Code: **CodebaseOS: Ingest this repo** → toast shows `✓ complete N/N`.
+
+Tell the story: *"large repos we sample and say so; small repos we ingest
+**completely** — and prove it."*
+
 ## Live GitHub webhook (optional — big wow)
 
 Make a real PR update the graph on stage:

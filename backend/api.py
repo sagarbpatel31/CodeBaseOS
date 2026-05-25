@@ -551,19 +551,24 @@ async def list_repos():
 
 
 @app.post("/repos")
-async def ingest_repo(repo: str, commits: int = 5, prs: int = 0, issues: int = 0):
+async def ingest_repo(
+    repo: str, commits: int = 5, prs: int = 0, issues: int = 0, auto: bool = False
+):
     """Ingest a repository via the API (commits, optionally PRs + issues).
 
-    Uses the same in-memory-chained ingest path as the firehose, so the Merkle
-    chain stays intact. Returns per-kind counts.
+    With auto=true, sizes the ingest to the repo (small repos ingested fully,
+    large ones sampled) and returns coverage so the caller can show a
+    "complete N/N" badge. Uses the in-memory-chained path → Merkle stays intact.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="HydraDB not connected")
     if "/" not in repo:
         raise HTTPException(status_code=400, detail="repo must be owner/name")
     owner, name = repo.split("/", 1)
-    out: dict[str, int] = {}
     try:
+        if auto:
+            return await _ingest_repo_auto(owner, name)
+        out: dict[str, int] = {}
         if commits > 0:
             out["commits"] = len(await _ingest_live(owner, name, "commit", min(commits, 20)))
         if prs > 0:
@@ -1624,6 +1629,72 @@ async def _ingest_live(owner: str, repo: str, kind: str, count: int) -> list[dic
     except Exception:
         pass
     return events
+
+
+_AUTO_FULL_CAP = 60
+
+
+async def _ingest_repo_auto(owner: str, repo: str) -> dict:
+    """Size the ingest to the repo and record coverage. Small repos ingest
+    fully (complete); large repos sample the latest. One ensure_repository call
+    carries the coverage so /repos can show a 'complete N/N' badge."""
+    from ingester.github import GitHubIngester
+    ingester = GitHubIngester.from_env(_db)
+    chain = _ChainBuilder()
+    await chain.init()
+    try:
+        total = await ingester.count_commits(owner, repo)
+        if total and total <= _AUTO_FULL_CAP:
+            n_c, n_p, n_i = total, 20, 20
+        else:
+            n_c, n_p, n_i = _AUTO_FULL_CAP, 15, 15
+
+        ep0 = await chain.next("ingest_repo")
+        repo_node, _sid = await ingester.ensure_repository(
+            owner, repo, ep0.id, total_commits=total, ingested_commits=min(n_c, total or n_c)
+        )
+
+        data = await ingester._get(f"/repos/{owner}/{repo}/commits", params={"per_page": min(n_c, 100)})
+        commits_done = 0
+        for c in list(reversed(data))[:n_c]:
+            ep = await chain.next("ingest_commit")
+            r = await ingester.ingest_one_commit(owner, repo, c["sha"], repo_node.id, ep)
+            _record_event("commit", r["message"] or r["sha"][:12], sha=r["sha"][:12], author=r["author"])
+            commits_done += 1
+
+        prs = await ingester.get_pulls(owner, repo, n_p)
+        for pr in prs[:n_p]:
+            ep = await chain.next("ingest_pr")
+            r = await ingester.ingest_pr(owner, repo, pr, repo_node.id, ep)
+            _record_event("pr", f"#{r['number']} {r['title']}", author=r["author"], state=r["state"])
+
+        issues = await ingester.get_issues(owner, repo, n_i)
+        taken = 0
+        for iss in issues:
+            if taken >= n_i:
+                break
+            if "pull_request" in iss:
+                continue
+            ep = await chain.next("ingest_issue")
+            r = await ingester.ingest_issue(iss, repo_node.id, ep)
+            _record_event("issue", f"#{r['number']} {r['title']}", author=r["author"], state=r["state"])
+            taken += 1
+    finally:
+        await ingester.close()
+
+    try:
+        await _ws_manager.broadcast(await _fetch_graph_snapshot(_db))
+    except Exception:
+        pass
+
+    complete = bool(total) and commits_done >= total
+    return {
+        "repo": f"{owner}/{repo}",
+        "ingested": {"commits": commits_done, "prs": min(len(prs), n_p), "issues": taken},
+        "total_commits": total,
+        "ingested_commits": commits_done,
+        "complete": complete,
+    }
 
 
 @app.get("/events")

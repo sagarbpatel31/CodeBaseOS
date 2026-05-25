@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- **Ingest this repo** now auto-sizes the ingest and reports **coverage** —
+  small repos ingest fully and the toast confirms "✓ complete N/N commits".
+
 ## 0.4.0
 
 - **Ask the codebase** — conversational, graph-grounded Q&A with clickable

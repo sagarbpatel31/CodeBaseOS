@@ -180,7 +180,7 @@ export function activate(context: vscode.ExtensionContext): void {
       { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: ingesting ${repo}…` },
       async () => {
         try {
-          const r = await client.ingestRepo(repo, { commits: 10, prs: 5, issues: 5 });
+          const r = await client.ingestRepo(repo, { auto: true });
           const parts = Object.entries(r.ingested)
             .map(([k, v]) => `${v} ${k}`)
             .join(', ');
@@ -188,8 +188,15 @@ export function activate(context: vscode.ExtensionContext): void {
           await vscode.workspace
             .getConfiguration('codebaseos')
             .update('repo', repo, vscode.ConfigurationTarget.Workspace);
+          const coverage =
+            r.total_commits
+              ? r.complete
+                ? ` · ✓ complete ${r.ingested_commits}/${r.total_commits} commits`
+                : ` · ◐ sampled ${r.ingested_commits}/${r.total_commits} commits`
+              : '';
           void vscode.window.showInformationMessage(
-            `CodebaseOS: ingested ${repo}${parts ? ` — ${parts}` : ''}. Hover a line → "Origin story".`
+            `CodebaseOS: ingested ${repo}${parts ? ` — ${parts}` : ''}${coverage}. ` +
+              `Hover a line → "Origin story".`
           );
         } catch (err) {
           void vscode.window.showErrorMessage(

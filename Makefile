@@ -1,4 +1,4 @@
-.PHONY: setup hydradb-test test backend ingest webhooks extension-dev extension-pack dash demo demo-cold break verify cost publish submit
+.PHONY: setup hydradb-test test backend ingest demo-ingest webhooks extension-dev extension-pack dash demo demo-cold break verify cost publish submit
 
 # Install deps, set up venv, install extension dev deps
 setup:
@@ -21,6 +21,10 @@ backend:
 # Ingest a repo by URL/path — usage: make ingest REPO=tokio-rs/tokio
 ingest:
 	cbos ingest $(REPO)
+
+# Ingest the curated tiny repo — fully (shows the ✓ complete N/N coverage badge).
+demo-ingest:
+	cbos ingest octocat/Hello-World --auto
 
 # Expose the backend so real GitHub webhooks reach POST /webhook (live demo).
 # 1) make backend   2) make webhooks   3) add the printed URL as a GitHub webhook
