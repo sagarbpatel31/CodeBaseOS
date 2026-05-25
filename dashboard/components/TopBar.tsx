@@ -35,8 +35,6 @@ export function TopBar() {
     return () => clearInterval(id);
   }, []);
 
-  const cost = status?.costSpent ?? 0;
-  const cap = status?.costCap ?? 5;
   const nodes = status?.nodeCount ?? 0;
   const merkleOk = status?.merkleOk ?? true;
 
@@ -52,13 +50,8 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-5">
-        <div className="flex items-center gap-1.5" title="OpenAI spend vs the hard $5 cap. Every answer logs its cost.">
-          <span className="text-gray-500">cost</span>
-          <span className="text-green-400">${cost.toFixed(4)}</span>
-          <span className="text-gray-600">/</span>
-          <span className="text-gray-400">${cap.toFixed(2)}</span>
-        </div>
-
+        {/* Cost is tracked + hard-capped in the backend (and shown in the VS Code
+            status bar); intentionally not surfaced on the dashboard. */}
         <div className="flex items-center gap-1.5" title="Total nodes in the knowledge graph (commits, files, PRs, people, decisions…).">
           <span className="text-gray-500">nodes</span>
           <span className="text-blue-400">{nodes.toLocaleString()}</span>
