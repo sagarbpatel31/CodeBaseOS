@@ -1,8 +1,50 @@
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+
 import * as vscode from 'vscode';
+
 import { CodebaseOSClient } from './client';
 import { StatusBar } from './statusBar';
 
+const execAsync = promisify(exec);
 let statusBar: StatusBar | undefined;
+
+/** Parse "owner/repo" from any common GitHub remote URL form. */
+function parseGitHubSlug(remoteUrl: string): string {
+  const m = remoteUrl
+    .trim()
+    .replace(/\.git$/, '')
+    .match(/github\.com[:/]([^/]+\/[^/]+)$/);
+  return m ? m[1] : '';
+}
+
+/** Resolve the target repo: explicit setting wins, else the workspace's git
+ *  remote — so the extension works on ANY checked-out repo with zero config. */
+async function resolveRepo(): Promise<string> {
+  const configured = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+  if (configured) return configured;
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) return '';
+  try {
+    const { stdout } = await execAsync('git config --get remote.origin.url', {
+      cwd: folder.uri.fsPath,
+    });
+    return parseGitHubSlug(stdout);
+  } catch {
+    return '';
+  }
+}
+
+/** Show a failure with actionable next steps (ingest / open dashboard). Most
+ *  failures are "backend not running" or "repo not ingested yet". */
+async function guideOnError(message: string): Promise<void> {
+  const pick = await vscode.window.showErrorMessage(message, 'Ingest this repo', 'Open dashboard');
+  if (pick === 'Ingest this repo') {
+    await vscode.commands.executeCommand('codebaseos.ingestRepo');
+  } else if (pick === 'Open dashboard') {
+    await vscode.commands.executeCommand('codebaseos.openDashboard');
+  }
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('codebaseos');
@@ -88,7 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      const repo = await resolveRepo();
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: explaining ${file}:${line}…` },
         async () => {
@@ -96,8 +138,9 @@ export function activate(context: vscode.ExtensionContext): void {
             const result = await client.why(file!, line!, repo);
             showWhyPanel(context, result);
           } catch (err) {
-            void vscode.window.showErrorMessage(
-              `CodebaseOS /why failed: ${err instanceof Error ? err.message : String(err)}`
+            await guideOnError(
+              `CodebaseOS /why failed: ${err instanceof Error ? err.message : String(err)}. ` +
+                `Backend at ${backendUrl} — running, and this repo ingested?`
             );
           }
         }
@@ -105,6 +148,43 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
   context.subscriptions.push(whyCommand);
+
+  // Command: codebaseos.ingestRepo — zero-config: ingest the current repo so
+  // the extension works on ANY checked-out project without the CLI.
+  const ingestCommand = vscode.commands.registerCommand('codebaseos.ingestRepo', async () => {
+    const detected = await resolveRepo();
+    const repo = await vscode.window.showInputBox({
+      prompt: 'CodebaseOS: ingest which repository? (owner/name)',
+      value: detected,
+      placeHolder: 'owner/name (auto-detected from git remote)',
+      validateInput: (v) => (v.includes('/') ? null : 'Use owner/name'),
+    });
+    if (!repo) return;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: ingesting ${repo}…` },
+      async () => {
+        try {
+          const r = await client.ingestRepo(repo, { commits: 10, prs: 5, issues: 5 });
+          const parts = Object.entries(r.ingested)
+            .map(([k, v]) => `${v} ${k}`)
+            .join(', ');
+          // If the workspace repo was just ingested, persist it as the scope.
+          await vscode.workspace
+            .getConfiguration('codebaseos')
+            .update('repo', repo, vscode.ConfigurationTarget.Workspace);
+          void vscode.window.showInformationMessage(
+            `CodebaseOS: ingested ${repo}${parts ? ` — ${parts}` : ''}. Hover a line → "Origin story".`
+          );
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `CodebaseOS ingest failed: ${err instanceof Error ? err.message : String(err)}. ` +
+              `Is the backend running at ${backendUrl}?`
+          );
+        }
+      }
+    );
+  });
+  context.subscriptions.push(ingestCommand);
 
   // Command: codebaseos.provenance — the origin story (ordered, cited chain).
   const provenanceCommand = vscode.commands.registerCommand(
@@ -121,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Provenance.');
         return;
       }
-      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      const repo = await resolveRepo();
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: tracing origin story for ${file}:${line}…` },
         async () => {
@@ -129,8 +209,9 @@ export function activate(context: vscode.ExtensionContext): void {
             const result = await client.provenance(file!, line!, repo);
             showProvenancePanel(context, result);
           } catch (err) {
-            void vscode.window.showErrorMessage(
-              `CodebaseOS Provenance failed: ${err instanceof Error ? err.message : String(err)}`
+            await guideOnError(
+              `CodebaseOS Provenance failed: ${err instanceof Error ? err.message : String(err)}. ` +
+                `Backend at ${backendUrl} — running, and this repo ingested?`
             );
           }
         }
@@ -141,7 +222,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Command: codebaseos.busFactor — knowledge-risk ranking.
   const busFactorCommand = vscode.commands.registerCommand('codebaseos.busFactor', async () => {
-    const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+    const repo = await resolveRepo();
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'CodebaseOS: computing bus factor…' },
       async () => {
@@ -181,7 +262,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Compare.');
         return;
       }
-      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      const repo = await resolveRepo();
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: comparing graph vs baseline for ${file}:${line}…` },
         async () => {
@@ -217,7 +298,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Five Whys.');
         return;
       }
-      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      const repo = await resolveRepo();
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: tracing root cause for ${file}:${line}…` },
         async () => {
@@ -272,7 +353,7 @@ export function activate(context: vscode.ExtensionContext): void {
       placeHolder: 'e.g. tokio/src/fs',
     });
     if (!moduleName) return;
-    const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+    const repo = await resolveRepo();
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: building onboarding tour for ${moduleName}…` },
       async () => {

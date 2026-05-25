@@ -203,6 +203,25 @@ export class CodebaseOSClient {
     return (await response.json()) as ProvenanceResponse;
   }
 
+  async ingestRepo(
+    repo: string,
+    opts: { commits?: number; prs?: number; issues?: number } = {}
+  ): Promise<{ repo: string; ingested: Record<string, number> }> {
+    const params = new URLSearchParams({ repo });
+    if (opts.commits != null) params.set('commits', String(opts.commits));
+    if (opts.prs != null) params.set('prs', String(opts.prs));
+    if (opts.issues != null) params.set('issues', String(opts.issues));
+    const response = await fetch(`${this.baseUrl}/repos?${params}`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Ingest failed: ${response.status}`);
+    }
+    return (await response.json()) as { repo: string; ingested: Record<string, number> };
+  }
+
   async busFactor(repo = ''): Promise<BusFactorResponse> {
     const params = new URLSearchParams();
     if (repo) params.set('repo', repo);

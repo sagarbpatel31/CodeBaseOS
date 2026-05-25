@@ -31,6 +31,10 @@
         "title": "CodebaseOS: Origin story (provenance chain)"
       },
       {
+        "command": "codebaseos.ingestRepo",
+        "title": "CodebaseOS: Ingest this repo"
+      },
+      {
         "command": "codebaseos.busFactor",
         "title": "CodebaseOS: Bus factor (knowledge risk)"
       },
@@ -84,6 +88,10 @@
         },
         {
           "command": "codebaseos.compare",
+          "group": "navigation"
+        },
+        {
+          "command": "codebaseos.provenance",
           "group": "navigation"
         }
       ]
