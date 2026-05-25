@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- **First-run walkthrough**: a guided "Get started with CodebaseOS" (start
+  backend → ingest this repo → ask why → explore) shown on install.
+
 ## 0.2.0
 
 - **Zero-config**: auto-detects the repo from your git remote — works on any

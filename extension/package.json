@@ -2,7 +2,7 @@
   "name": "codebaseos",
   "displayName": "CodebaseOS",
   "description": "Right-click any line. Ask why. Get the real answer.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "CodeBaseOS",
   "engines": {
     "vscode": "^1.85.0"
@@ -95,7 +95,42 @@
           "group": "navigation"
         }
       ]
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "codebaseos.getStarted",
+        "title": "Get started with CodebaseOS",
+        "description": "Provenance for any repo, in three steps.",
+        "steps": [
+          {
+            "id": "backend",
+            "title": "Start the backend",
+            "description": "CodebaseOS talks to a local backend.\n[Open dashboard](command:codebaseos.openDashboard)",
+            "media": { "markdown": "media/walkthrough/backend.md" }
+          },
+          {
+            "id": "ingest",
+            "title": "Ingest this repo",
+            "description": "Pull this repo's history into the graph — auto-detected from your git remote.\n[Ingest this repo](command:codebaseos.ingestRepo)",
+            "media": { "markdown": "media/walkthrough/ingest.md" },
+            "completionEvents": ["onCommand:codebaseos.ingestRepo"]
+          },
+          {
+            "id": "why",
+            "title": "Ask why",
+            "description": "Hover a line or use the CodeLens to ask why code exists.\n[Why is this here?](command:codebaseos.why)",
+            "media": { "markdown": "media/walkthrough/why.md" },
+            "completionEvents": ["onCommand:codebaseos.why"]
+          },
+          {
+            "id": "explore",
+            "title": "Explore provenance",
+            "description": "Origin story, compare, five whys, bus factor.\n[Open dashboard](command:codebaseos.openDashboard)",
+            "media": { "markdown": "media/walkthrough/explore.md" }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
