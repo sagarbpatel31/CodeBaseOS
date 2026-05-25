@@ -1,4 +1,4 @@
-.PHONY: setup hydradb-test backend ingest webhooks extension-dev extension-pack dash demo-cold break verify cost publish submit
+.PHONY: setup hydradb-test test backend ingest webhooks extension-dev extension-pack dash demo-cold break verify cost publish submit
 
 # Install deps, set up venv, install extension dev deps
 setup:
@@ -9,6 +9,10 @@ setup:
 # Verify HydraDB connection + schema migrations
 hydradb-test:
 	python -m pytest tests/test_phase1.py -v
+
+# Run the full credential-free test suite (chaos, synthesizer, offline, provenance)
+test:
+	python -m pytest tests -q
 
 # Start the FastAPI backend (foreground)
 backend:

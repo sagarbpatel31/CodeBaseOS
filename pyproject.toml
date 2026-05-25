@@ -36,7 +36,7 @@ dev = [
 cbos = "cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend", "graph", "ingester", "cli"]
+packages = ["backend", "graph", "ingester", "cli", "synthesizer"]
 
 [tool.ruff]
 line-length = 100
