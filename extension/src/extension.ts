@@ -24,6 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const args = encodeURIComponent(JSON.stringify({ file: rel, line }));
         const md = new vscode.MarkdownString(
           `$(history) **CodebaseOS** — [Why does this line exist?](command:codebaseos.why?${args})\n\n` +
+            `$(git-commit) [Origin story (provenance chain)](command:codebaseos.provenance?${args})\n\n` +
             `$(versions) [Compare: with vs without HydraDB](command:codebaseos.compare?${args})\n\n` +
             `\`${rel}:${line}\``
         );
@@ -68,6 +69,65 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
   context.subscriptions.push(whyCommand);
+
+  // Command: codebaseos.provenance — the origin story (ordered, cited chain).
+  const provenanceCommand = vscode.commands.registerCommand(
+    'codebaseos.provenance',
+    async (arg?: { file: string; line: number }) => {
+      const editor = vscode.window.activeTextEditor;
+      let file = arg?.file;
+      let line = arg?.line;
+      if ((!file || !line) && editor) {
+        file = vscode.workspace.asRelativePath(editor.document.uri, false);
+        line = editor.selection.active.line + 1;
+      }
+      if (!file || !line) {
+        void vscode.window.showInformationMessage('Open a file to use CodebaseOS: Provenance.');
+        return;
+      }
+      const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: tracing origin story for ${file}:${line}…` },
+        async () => {
+          try {
+            const result = await client.provenance(file!, line!, repo);
+            showProvenancePanel(context, result);
+          } catch (err) {
+            void vscode.window.showErrorMessage(
+              `CodebaseOS Provenance failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      );
+    }
+  );
+  context.subscriptions.push(provenanceCommand);
+
+  // Command: codebaseos.busFactor — knowledge-risk ranking.
+  const busFactorCommand = vscode.commands.registerCommand('codebaseos.busFactor', async () => {
+    const repo = vscode.workspace.getConfiguration('codebaseos').get<string>('repo', '');
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'CodebaseOS: computing bus factor…' },
+      async () => {
+        try {
+          const r = await client.busFactor(repo);
+          const top = r.contributors
+            .slice(0, 8)
+            .map((c) => `${c.name} (${c.commits})`)
+            .join(', ');
+          await vscode.window.showInformationMessage(
+            `Bus factor: ${r.bus_factor} (${r.risk} risk) — ${r.unique_authors} authors, ${r.total_commits} commits. Top: ${top}`,
+            { modal: false }
+          );
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `CodebaseOS Bus-factor failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    );
+  });
+  context.subscriptions.push(busFactorCommand);
 
   // Command: codebaseos.compare — run /why (with graph) and /baseline-rag
   // (without graph) side by side to show the value of HydraDB provenance.
@@ -413,6 +473,73 @@ function showHandoffPanel(
   <div class="meta">context nodes: ${r.context_nodes} · cost: $${r.cost_usd.toFixed(6)}</div>
 </body></html>`;
   handoffPanel.reveal(vscode.ViewColumn.Beside);
+}
+
+let provenancePanel: vscode.WebviewPanel | undefined;
+
+function showProvenancePanel(
+  context: vscode.ExtensionContext,
+  r: import('./client').ProvenanceResponse
+): void {
+  if (!provenancePanel) {
+    provenancePanel = vscode.window.createWebviewPanel(
+      'codebaseosProvenance',
+      'CodebaseOS — Origin Story',
+      vscode.ViewColumn.Beside,
+      { enableScripts: false, retainContextWhenHidden: true }
+    );
+    provenancePanel.onDidDispose(() => (provenancePanel = undefined), null, context.subscriptions);
+  }
+  const color: Record<string, string> = {
+    Commit: 'var(--vscode-charts-blue)',
+    PR: 'var(--vscode-charts-purple)',
+    Issue: 'var(--vscode-charts-yellow)',
+    Decision: 'var(--vscode-charts-green)',
+    Person: 'var(--vscode-charts-red)',
+    File: 'var(--vscode-charts-green)',
+  };
+  const hops = r.chain
+    .map(
+      (h) => `
+      <li class="hop">
+        <span class="dot" style="background:${color[h.type] ?? 'var(--vscode-descriptionForeground)'}"></span>
+        <div>
+          <span class="badge" style="color:${color[h.type] ?? 'inherit'}">${_esc(h.type)}</span>
+          ${h.when ? `<span class="when">${_esc(h.when)}</span>` : ''}
+          <div class="title">${_esc(h.title)}</div>
+          ${h.detail ? `<div class="detail">${_esc(h.detail)}</div>` : ''}
+        </div>
+      </li>`
+    )
+    .join('');
+  const edges = r.verified_edges
+    .map((e) => `<li>✓ ${_esc(e.context)} <span class="conf">(${e.confidence})</span></li>`)
+    .join('');
+  provenancePanel.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+  body { font-family: var(--vscode-font-family); padding: 16px 20px; color: var(--vscode-foreground); }
+  .loc { font-family: var(--vscode-editor-font-family); color: var(--vscode-textLink-foreground); font-size: 12px; margin-bottom: 12px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--vscode-descriptionForeground); margin: 18px 0 8px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  .hop { display: flex; gap: 10px; padding: 6px 0; border-left: 1px solid var(--vscode-panel-border); margin-left: 5px; padding-left: 14px; position: relative; }
+  .dot { position: absolute; left: -5px; top: 11px; width: 10px; height: 10px; border-radius: 50%; }
+  .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .when { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: 6px; }
+  .title { font-size: 13px; margin-top: 2px; }
+  .detail { font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .verified li { font-size: 12px; color: var(--vscode-charts-green); margin: 2px 0; }
+  .conf { color: var(--vscode-descriptionForeground); }
+  .meta { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); }
+</style></head>
+<body>
+  <div class="loc">${_esc(r.file)}:${r.line}</div>
+  <h2>Origin story</h2>
+  <ul>${hops || '<li class="detail">No chain reconstructed.</li>'}</ul>
+  ${edges ? `<h2>Verified graph edges</h2><ul class="verified">${edges}</ul>` : ''}
+  <div class="meta">${r.context_nodes} context nodes · cost: $${r.cost_usd.toFixed(6)}</div>
+</body></html>`;
+  provenancePanel.reveal(vscode.ViewColumn.Beside);
 }
 
 export function deactivate(): void {

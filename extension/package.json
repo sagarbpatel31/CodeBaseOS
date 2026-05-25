@@ -27,6 +27,14 @@
         "title": "CodebaseOS: Compare (with vs without HydraDB)"
       },
       {
+        "command": "codebaseos.provenance",
+        "title": "CodebaseOS: Origin story (provenance chain)"
+      },
+      {
+        "command": "codebaseos.busFactor",
+        "title": "CodebaseOS: Bus factor (knowledge risk)"
+      },
+      {
         "command": "codebaseos.fiveWhys",
         "title": "CodebaseOS: Five Whys"
       },

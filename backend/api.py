@@ -668,6 +668,201 @@ async def resolve_persons():
     return {"persons_created": created}
 
 
+@app.post("/extract-decisions")
+async def extract_decisions(repo: str = "", limit: int = 5):
+    """Mine architectural decisions from recent PRs (LLM via the synthesizer
+    chokepoint) and persist Decision nodes linked to their PR. Makes the
+    'why → Decision #X' provenance story real instead of manual-only."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    import json as _json
+    import os as _os
+
+    from graph.bitemporal import make_node
+    from graph.schema import Decision
+    from ingester.github import GitHubIngester
+
+    target = repo or _os.environ.get("DEMO_REPO", "tokio-rs/tokio")
+    if "/" not in target:
+        raise HTTPException(status_code=400, detail="repo must be owner/name")
+    owner, name = target.split("/", 1)
+    limit = max(1, min(limit, 10))
+
+    # Map existing PR nodes by number so decisions can link to them.
+    pr_nodes = await _db.list_nodes_by_type("PR")
+    by_num = {str(p["dm"].get("pr_number", "")): p["id"] for p in pr_nodes if p["dm"].get("pr_number")}
+
+    ingester = GitHubIngester.from_env(_db)
+    chain = _ChainBuilder()
+    await chain.init()
+    created: list[dict] = []
+    try:
+        prs = await ingester.get_pulls(owner, name, limit)
+        for pr in prs[:limit]:
+            num = str(pr.get("number", ""))
+            title = pr.get("title", "")
+            body = (pr.get("body") or "")[:1500]
+            res = await _synthesize(
+                call_source="extract-decision",
+                cache_key=f"{target}|pr{num}",
+                max_tokens=300,
+                response_format={"type": "json_object"},
+                system=(
+                    "Extract the single key architectural/design DECISION embodied by this PR. "
+                    'Respond as JSON {"summary": "...", "rationale": "...", '
+                    '"confidence": "low|medium|high"}. summary = one concise line; rationale = '
+                    "the why. For trivial PRs (typo/docs/ci bump) use confidence \"low\"."
+                ),
+                user=f"PR #{num}: {title}\n\n{body}",
+            )
+            try:
+                d = _json.loads(res.text or "{}")
+            except Exception:
+                d = {}
+            summary = str(d.get("summary", "")).strip()
+            if not summary:
+                continue
+            ep = await chain.next("decide")
+            dec = make_node(
+                Decision,
+                episode_id=ep.id,
+                source="extracted",
+                summary=summary,
+                rationale=str(d.get("rationale", "")),
+                confidence=str(d.get("confidence", "medium")),
+                actor="synthesizer",
+                made_by_name=pr.get("user", {}).get("login", ""),
+                decision_id=f"PR{num}",
+            )
+            rels = [by_num[num]] if num in by_num else None
+            await _db.write_node(dec, relations=rels)
+            created.append({
+                "decision_id": f"PR{num}",
+                "summary": summary,
+                "confidence": dec.confidence,
+                "linked_pr": num in by_num,
+            })
+    finally:
+        await ingester.close()
+
+    try:
+        await _ws_manager.broadcast(await _fetch_graph_snapshot(_db))
+    except Exception:
+        pass
+    return {"created": len(created), "decisions": created}
+
+
+@app.get("/provenance")
+async def provenance(file: str, line: int = 1, repo: str = ""):
+    """The origin story: an ordered, cited provenance chain for code at
+    file:line — commits → PRs → issues → decisions → people — assembled from
+    graph recall, and accompanied by HydraDB's own verified graph edges."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    import json as _json
+
+    # 1. Locate the File node (for real, cited graph edges).
+    verified_edges: list[dict] = []
+    files = await _db.list_nodes_by_type("File")
+    fid = ""
+    for f in files:
+        path = f["dm"].get("path", "") or f.get("title", "").replace("File:", "")
+        if path == file or path.endswith(file) or f.get("title", "").endswith(file):
+            fid = f["id"]
+            break
+    if fid:
+        neigh = await _db.graph_neighbors(fid, limit=20)
+        # Keep the most-confident, human-readable extracted relationships.
+        neigh.sort(key=lambda n: n.get("confidence", 0.0), reverse=True)
+        for n in neigh[:6]:
+            if n.get("context"):
+                verified_edges.append({
+                    "predicate": n["predicate"],
+                    "context": n["context"][:200],
+                    "confidence": round(float(n.get("confidence", 0.0)), 2),
+                })
+
+    # 2. Recall the surrounding provenance context and assemble an ordered chain.
+    scope = f"In {repo}, " if repo else ""
+    query = f"{scope}the full history of {file}: commits, PRs, issues, decisions, and people behind it."
+    context, ctx_count = await _recall_context(query, max_results=12)
+    res = await _synthesize(
+        call_source="provenance",
+        cache_key=f"{repo}|{file}|{line}",
+        max_tokens=500,
+        response_format={"type": "json_object"},
+        system=(
+            "You are CodebaseOS. From the knowledge-graph context, reconstruct the ORIGIN STORY "
+            "of the referenced code as an ordered provenance chain (earliest cause → latest). "
+            "Each hop cites a real artifact. Respond as JSON: "
+            '{"chain": [{"type": "Commit|PR|Issue|Decision|Person", "title": "...", '
+            '"detail": "one sentence", "when": "date or \'\'"}]}. Up to 6 hops. '
+            "Do not invent commit hashes or PR numbers not present in the context."
+        ),
+        user=f"Target: {file}:{line}\n\nKnowledge graph context:\n{context}",
+    )
+    try:
+        parsed = _json.loads(res.text or "{}")
+        chain_hops = parsed.get("chain", []) if isinstance(parsed, dict) else []
+    except Exception:
+        chain_hops = []
+    chain_hops = [
+        {
+            "order": i + 1,
+            "type": str(h.get("type", "")),
+            "title": str(h.get("title", "")),
+            "detail": str(h.get("detail", "")),
+            "when": str(h.get("when", "")),
+        }
+        for i, h in enumerate(chain_hops[:6])
+        if isinstance(h, dict)
+    ]
+    return {
+        "file": file,
+        "line": line,
+        "chain": chain_hops,
+        "verified_edges": verified_edges,
+        "context_nodes": ctx_count,
+        "cost_usd": round(res.cost_usd, 6),
+        "cached": res.cached,
+    }
+
+
+@app.get("/bus-factor")
+async def bus_factor(repo: str = "", top: int = 10):
+    """Bus-factor / knowledge-risk: rank contributors by commit volume and
+    report how few people hold >50% of the history. No LLM — pure graph counts."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    from collections import Counter
+
+    counts: Counter = Counter()
+    for cm in await _db.list_nodes_by_type("Commit"):
+        author = cm["dm"].get("author_name", "")
+        if author:
+            counts[author] += 1
+    total = sum(counts.values())
+    ranked = [{"name": n, "commits": k} for n, k in counts.most_common(max(1, min(top, 50)))]
+
+    # Bus factor = smallest number of people covering >50% of commits.
+    cum = 0
+    bus = 0
+    for _n, k in counts.most_common():
+        cum += k
+        bus += 1
+        if total and cum * 2 >= total:
+            break
+    risk = "high" if bus <= 2 else ("medium" if bus <= 4 else "low")
+    return {
+        "repo": repo,
+        "contributors": ranked,
+        "total_commits": total,
+        "unique_authors": len(counts),
+        "bus_factor": bus,
+        "risk": risk,
+    }
+
+
 @app.get("/why")
 async def why(file: str, line: int, repo: str = ""):
     """

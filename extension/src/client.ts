@@ -54,6 +54,35 @@ export interface HandoffResponse {
   cost_usd: number;
 }
 
+export interface ProvenanceHop {
+  order: number;
+  type: string;
+  title: string;
+  detail: string;
+  when: string;
+}
+export interface VerifiedEdge {
+  predicate: string;
+  context: string;
+  confidence: number;
+}
+export interface ProvenanceResponse {
+  file: string;
+  line: number;
+  chain: ProvenanceHop[];
+  verified_edges: VerifiedEdge[];
+  context_nodes: number;
+  cost_usd: number;
+}
+export interface BusFactorResponse {
+  repo: string;
+  contributors: { name: string; commits: number }[];
+  total_commits: number;
+  unique_authors: number;
+  bus_factor: number;
+  risk: string;
+}
+
 const MOCK_STATUS: StatusResponse = {
   costSpent: 0.0,
   costCap: 5.0,
@@ -151,6 +180,32 @@ export class CodebaseOSClient {
       throw new Error(`Handoff request failed: ${response.status}`);
     }
     return (await response.json()) as HandoffResponse;
+  }
+
+  async provenance(file: string, line: number, repo = ''): Promise<ProvenanceResponse> {
+    const params = new URLSearchParams({ file, line: String(line) });
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/provenance?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Provenance request failed: ${response.status}`);
+    }
+    return (await response.json()) as ProvenanceResponse;
+  }
+
+  async busFactor(repo = ''): Promise<BusFactorResponse> {
+    const params = new URLSearchParams();
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/bus-factor?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Bus-factor request failed: ${response.status}`);
+    }
+    return (await response.json()) as BusFactorResponse;
   }
 
   mockStatus(): StatusResponse {

@@ -326,6 +326,38 @@ class HydraClient:
             print(f"[WARN] list_nodes_by_type({node_type}) failed: {exc}")
         return out
 
+    async def graph_neighbors(self, source_id: str, limit: int = 25) -> list[dict[str, Any]]:
+        """Return HydraDB's auto-extracted graph edges for a node.
+
+        HydraDB builds its own knowledge graph from content; each relation has a
+        predicate, a human-readable `context` sentence, and a confidence. We use
+        these as the real (cited) provenance edges. Returns a list of:
+          {target_name, target_type, predicate, context, confidence}
+        """
+        await self.ensure_tenant()
+        out: list[dict[str, Any]] = []
+        try:
+            resp = await self._client.fetch.graph_relations_by_source_id(
+                source_id=source_id,
+                tenant_id=self.tenant_id,
+                sub_tenant_id="default",
+                limit=limit,
+            )
+            data = resp.model_dump() if hasattr(resp, "model_dump") else {}
+            for rel in data.get("relations", []) or []:
+                target = rel.get("target") or {}
+                for r in rel.get("relations", []) or []:
+                    out.append({
+                        "target_name": target.get("name", ""),
+                        "target_type": target.get("type", ""),
+                        "predicate": r.get("raw_predicate") or r.get("canonical_predicate", ""),
+                        "context": r.get("context", ""),
+                        "confidence": r.get("confidence", 0.0),
+                    })
+        except Exception as exc:
+            print(f"[WARN] graph_neighbors({source_id}) failed: {exc}")
+        return out
+
     async def get_episodes_ordered(self) -> list[dict[str, Any]]:
         """
         Fetch all Episode nodes ordered by sequence_no.
