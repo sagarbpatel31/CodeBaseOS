@@ -330,6 +330,14 @@ async def _fetch_graph_snapshot(db: HydraClient, as_of: Optional[str] = None) ->
                 if pr_id:
                     add_link(nid, pr_id, "review_on")
                     linked = True
+            # 3b. Person → its resolved Identities (cross-repo bridge)
+            if node_type == "Person":
+                csv = dm.get("identity_ids_csv", "")
+                for iid in (csv.split(",") if csv else []):
+                    iid = iid.strip()
+                    if iid:
+                        add_link(nid, iid, "is")
+                        linked = True
             # 4. Merkle chain between Episodes
             if node_type == "Episode":
                 prev = dm.get("prev_hash", "")
@@ -452,8 +460,28 @@ async def list_repos():
 
 
 @app.post("/repos")
-async def ingest_repo():
-    raise _not_yet(2)
+async def ingest_repo(repo: str, commits: int = 5, prs: int = 0, issues: int = 0):
+    """Ingest a repository via the API (commits, optionally PRs + issues).
+
+    Uses the same in-memory-chained ingest path as the firehose, so the Merkle
+    chain stays intact. Returns per-kind counts.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    if "/" not in repo:
+        raise HTTPException(status_code=400, detail="repo must be owner/name")
+    owner, name = repo.split("/", 1)
+    out: dict[str, int] = {}
+    try:
+        if commits > 0:
+            out["commits"] = len(await _ingest_live(owner, name, "commit", min(commits, 20)))
+        if prs > 0:
+            out["prs"] = len(await _ingest_live(owner, name, "pr", min(prs, 20)))
+        if issues > 0:
+            out["issues"] = len(await _ingest_live(owner, name, "issue", min(issues, 20)))
+        return {"repo": repo, "ingested": out}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/er-queue")
@@ -527,6 +555,53 @@ async def _log_llm_cost(usage, call_source: str) -> float:
     )
     await _db.write_node(cost_node)
     return cost_usd
+
+
+@app.post("/resolve")
+async def resolve_persons():
+    """Persist Person nodes for auto-merged identity clusters (>1 identity),
+    bridging identities across repos. Idempotent: dedupes by primary_email.
+    Person→Identity edges then render in the graph as cross-repo bridges."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="HydraDB not connected")
+    from graph.resolve import resolve_identities
+    from graph.schema import Person
+    from graph.bitemporal import make_node
+
+    identities = await _db.list_nodes_by_type("Identity")
+    clusters = resolve_identities(identities)["clusters"]
+
+    existing = await _db.list_nodes_by_type("Person")
+    have_emails = {p["dm"].get("primary_email", "") for p in existing}
+
+    chain = _ChainBuilder()
+    await chain.init()
+    created = 0
+    for c in clusters:
+        if len(c["identity_ids"]) < 2:
+            continue  # only persist real merges
+        email = c["primary_email"]
+        if email and email in have_emails:
+            continue  # already persisted
+        ep = await chain.next("entity_resolve")
+        person = make_node(
+            Person,
+            episode_id=ep.id,
+            source="resolver",
+            canonical_name=c["person_name"],
+            primary_email=email,
+            identity_ids=c["identity_ids"],
+        )
+        await _db.write_node(person, relations=c["identity_ids"])
+        if email:
+            have_emails.add(email)
+        created += 1
+
+    try:
+        await _ws_manager.broadcast(await _fetch_graph_snapshot(_db))
+    except Exception:
+        pass
+    return {"persons_created": created}
 
 
 @app.get("/why")

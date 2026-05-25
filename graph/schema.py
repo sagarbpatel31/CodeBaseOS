@@ -296,11 +296,15 @@ class Person(BaseNode):
     canonical_name: str
     primary_email: str = ""
     current_employer: str = ""
+    identity_ids: list[str] = Field(default_factory=list)  # resolved Identity node ids
 
     def to_hydra_source(self, tenant_id: str = "codebaseos", sub_tenant_id: str = "default") -> dict[str, Any]:
         src = super().to_hydra_source(tenant_id=tenant_id, sub_tenant_id=sub_tenant_id)
         src["title"] = f"Person:{self.canonical_name}"
         src["document_metadata"]["primary_email"] = self.primary_email
+        src["document_metadata"]["canonical_name"] = self.canonical_name
+        # HydraDB metadata keeps only str/bool — store the id list as CSV.
+        src["document_metadata"]["identity_ids_csv"] = ",".join(self.identity_ids)
         return src
 
 
