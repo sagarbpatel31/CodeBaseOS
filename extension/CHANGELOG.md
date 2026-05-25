@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- **Zero-config**: auto-detects the repo from your git remote — works on any
+  checked-out project. New **"Ingest this repo"** command (one click, no CLI).
+- **Clickable citations**: Why answers and Origin-story hops link to the real
+  GitHub PR / commit / issue — verifiable, not just prose.
+- **Inline CodeLens**: "🧬 Why? · 📜 Origin story" above every definition.
+- **Origin story** (provenance chain) and **Bus factor** commands.
+- Friendlier failures: errors offer "Ingest this repo" / "Open dashboard".
+
 ## 0.1.0
 
 - **Why is this here?** — hover any line → graph-grounded provenance.
