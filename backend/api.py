@@ -923,6 +923,146 @@ async def decisions(repo: str = ""):
     return {"count": len(out), "decisions": out}
 
 
+@app.get("/ask")
+async def ask(q: str, repo: str = ""):
+    """Ask the codebase anything in plain language — conversational provenance.
+    Grounded in graph recall, with clickable citations."""
+    if _db is None:
+        return {
+            "q": q,
+            "answer": "Offline demo — connect HydraDB and ingest a repo to ask live questions.",
+            "citations": [],
+            "context_nodes": 0,
+            "cost_usd": 0.0,
+            "cached": True,
+        }
+    try:
+        scope = f"In repository {repo}: " if repo else ""
+        context, ctx_count, sources = await _recall_context(f"{scope}{q}", max_results=10)
+        result = await _synthesize(
+            call_source="ask",
+            cache_key=f"{repo}|{q}",
+            max_tokens=400,
+            system=(
+                "You are CodebaseOS, answering a developer's question about THIS codebase "
+                "using only the knowledge-graph context (commits, PRs, issues, decisions, "
+                "people). Be specific and cite real artifacts. If the context doesn't cover "
+                "it, say so plainly. 3-6 sentences."
+            ),
+            user=f"Question: {q}\n\nKnowledge graph context:\n{context}",
+        )
+        citations = []
+        seen: set[str] = set()
+        for s in sources:
+            t = s.get("type", "")
+            if t not in ("PR", "Issue", "Commit"):
+                continue
+            url = _artifact_url(repo, t, s.get("title", ""))
+            if url and url not in seen:
+                seen.add(url)
+                citations.append({"type": t, "title": s.get("title", ""), "url": url})
+        return {
+            "q": q,
+            "answer": result.text or "No answer generated.",
+            "citations": citations[:6],
+            "context_nodes": ctx_count,
+            "cost_usd": round(result.cost_usd, 6),
+            "cached": result.cached,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/risk")
+async def risk(repo: str = "", top: int = 15):
+    """Knowledge-risk per file: files whose history rests on a rare contributor
+    (low bus-factor) are flagged. Pure graph counts — no LLM."""
+    if _db is None:
+        return {"repo": repo, "files": []}
+    from collections import Counter
+
+    commits = await _db.list_nodes_by_type("Commit")
+    author_commits: Counter = Counter()
+    ep_author: dict[str, str] = {}
+    for c in commits:
+        dm = c["dm"]
+        a = dm.get("author_name", "")
+        ep = dm.get("episode_id", "")
+        if a:
+            author_commits[a] += 1
+        if ep and a and ep not in ep_author:
+            ep_author[ep] = a
+
+    seen: set[str] = set()
+    out: list[dict] = []
+    for f in await _db.list_nodes_by_type("File"):
+        dm = f["dm"]
+        path = dm.get("path", "") or f.get("title", "").replace("File:", "")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        author = ep_author.get(dm.get("episode_id", ""), "")
+        ac = author_commits.get(author, 0)
+        level = "high" if ac <= 1 else ("medium" if ac <= 3 else "low")
+        out.append({
+            "id": f["id"],
+            "path": path,
+            "author": author,
+            "author_commits": ac,
+            "risk": level,
+        })
+    order = {"high": 0, "medium": 1, "low": 2}
+    out.sort(key=lambda x: (order[x["risk"]], x["author_commits"]))
+    return {"repo": repo, "files": out[:max(1, min(top, 50))]}
+
+
+@app.get("/audit-report")
+async def audit_report(repo: str = ""):
+    """A shareable provenance/governance report as Markdown: decisions, top
+    contributors, bus-factor, knowledge-risk files, and the Merkle proof."""
+    if _db is None:
+        return {"repo": repo, "markdown": "# CodebaseOS report\n\n_Offline demo._"}
+    import datetime as _dt
+
+    dec = (await decisions(repo=repo)).get("decisions", [])  # type: ignore
+    bf = await bus_factor(repo=repo)
+    rk = await risk(repo=repo, top=10)
+    merkle = await verify_chain(_db)
+
+    lines: list[str] = [
+        f"# CodebaseOS provenance report — {repo or 'all repos'}",
+        f"_Generated {_dt.datetime.utcnow().isoformat(timespec='seconds')}Z_",
+        "",
+        f"- Merkle chain: **{'intact ✓' if merkle.ok else 'BROKEN ✗'}** "
+        f"(length {merkle.chain_length}, head `{(merkle.head_hash or '')[:12]}`)",
+        f"- Bus factor: **{bf['bus_factor']}** ({bf['risk']} risk) across "
+        f"{bf['unique_authors']} authors, {bf['total_commits']} commits",
+        "",
+        "## Architectural decisions",
+    ]
+    if dec:
+        for d in dec:
+            line = f"- **{d['decision_id']}** ({d.get('confidence', '')}): {d['summary']}"
+            if d.get("url"):
+                line += f" — [{d['url']}]({d['url']})"
+            lines.append(line)
+    else:
+        lines.append("- _none extracted yet_")
+
+    lines += ["", "## Top contributors"]
+    for c in bf.get("contributors", [])[:8]:
+        lines.append(f"- {c['name']} — {c['commits']} commits")
+
+    lines += ["", "## Knowledge-risk files (low bus-factor)"]
+    high = [f for f in rk.get("files", []) if f["risk"] == "high"]
+    for f in (high or rk.get("files", []))[:10]:
+        lines.append(f"- `{f['path']}` — {f['risk']} (author: {f['author'] or 'unknown'})")
+
+    return {"repo": repo, "markdown": "\n".join(lines)}
+
+
 @app.get("/why")
 async def why(file: str, line: int, repo: str = ""):
     """

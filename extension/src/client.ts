@@ -272,6 +272,39 @@ export class CodebaseOSClient {
     return (await response.json()) as DiffResponse;
   }
 
+  async ask(q: string, repo = ''): Promise<{ answer: string; citations: Citation[] }> {
+    const params = new URLSearchParams({ q });
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/ask?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Ask request failed: ${response.status}`);
+    return (await response.json()) as { answer: string; citations: Citation[] };
+  }
+
+  async risk(repo = ''): Promise<{ files: { path: string; author: string; risk: string }[] }> {
+    const params = new URLSearchParams();
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/risk?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) throw new Error(`Risk request failed: ${response.status}`);
+    return (await response.json()) as { files: { path: string; author: string; risk: string }[] };
+  }
+
+  async auditReport(repo = ''): Promise<{ markdown: string }> {
+    const params = new URLSearchParams();
+    if (repo) params.set('repo', repo);
+    const response = await fetch(`${this.baseUrl}/audit-report?${params}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Audit-report request failed: ${response.status}`);
+    return (await response.json()) as { markdown: string };
+  }
+
   async busFactor(repo = ''): Promise<BusFactorResponse> {
     const params = new URLSearchParams();
     if (repo) params.set('repo', repo);

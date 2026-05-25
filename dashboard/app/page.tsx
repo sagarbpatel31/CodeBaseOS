@@ -12,6 +12,7 @@ import { NodePanel } from "@/components/NodePanel";
 import { Legend } from "@/components/Legend";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterChips } from "@/components/FilterChips";
+import { AskPanel } from "@/components/AskPanel";
 
 export default function Home() {
   const [asOf, setAsOf] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export default function Home() {
           {graphData.nodes.length === 0 ? <EmptyState /> : <Legend />}
           {graphData.nodes.length > 0 && <FilterChips hidden={hidden} onToggle={toggleType} />}
           <ChaosPanel onHighlightChange={(ids) => setDangerIds(new Set(ids))} />
+          {graphData.nodes.length > 0 && <AskPanel />}
           <NodePanel node={selected} repo="" onClose={() => setSelected(null)} />
           <TimeSlider
             timeRange={timeRange}

@@ -22,9 +22,13 @@ backend:
 ingest:
 	cbos ingest $(REPO)
 
-# Start ngrok tunnel + webhook receiver
+# Expose the backend so real GitHub webhooks reach POST /webhook (live demo).
+# 1) make backend   2) make webhooks   3) add the printed URL as a GitHub webhook
+#    (content-type application/json; events: push, pull_request, issues).
 webhooks:
-	@echo "TODO: implement — ngrok http 8000 & .venv/bin/python -m backend.webhooks"
+	@echo "Add  <forwarding-url>/webhook  as a GitHub webhook (push, pull_request, issues)."
+	@echo "Then open a PR / push — nodes stream into the graph and the Merkle chain extends."
+	ngrok http 8000
 
 # Compile + open VS Code with the extension loaded for debugging
 extension-dev:

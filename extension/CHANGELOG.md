@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- **Ask the codebase** — conversational, graph-grounded Q&A with clickable
+  sources (also a chat panel in the dashboard).
+- **Knowledge-risk files** — surface files resting on a rare contributor.
+- **Provenance report** — open a shareable Markdown audit (decisions, top
+  contributors, bus-factor, risk, Merkle proof).
+
 ## 0.3.0
 
 - **Explain this file** — plain-English overview of an entire file: what it

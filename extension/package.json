@@ -2,7 +2,7 @@
   "name": "codebaseos",
   "displayName": "CodebaseOS",
   "description": "Right-click any line. Ask why. Get the real answer.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "CodeBaseOS",
   "engines": {
     "vscode": "^1.85.0"
@@ -45,6 +45,18 @@
       {
         "command": "codebaseos.diff",
         "title": "CodebaseOS: What changed (time window)"
+      },
+      {
+        "command": "codebaseos.ask",
+        "title": "CodebaseOS: Ask the codebase"
+      },
+      {
+        "command": "codebaseos.risk",
+        "title": "CodebaseOS: Knowledge-risk files"
+      },
+      {
+        "command": "codebaseos.auditReport",
+        "title": "CodebaseOS: Provenance report"
       },
       {
         "command": "codebaseos.fiveWhys",

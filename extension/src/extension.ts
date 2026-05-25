@@ -344,6 +344,78 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   context.subscriptions.push(busFactorCommand);
 
+  // Command: codebaseos.ask — ask the codebase anything (conversational).
+  const askCommand = vscode.commands.registerCommand('codebaseos.ask', async () => {
+    const q = await vscode.window.showInputBox({
+      prompt: 'Ask the codebase anything',
+      placeHolder: 'e.g. who works on the timer code? why is auth like this?',
+    });
+    if (!q) return;
+    const repo = await resolveRepo();
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `CodebaseOS: ${q}` },
+      async () => {
+        try {
+          const r = await client.ask(q, repo);
+          const md =
+            `## ${q}\n\n${r.answer}\n` +
+            (r.citations.length
+              ? `\n### Sources\n${r.citations.map((c) => `- [${c.type}] ${c.title} — ${c.url}`).join('\n')}`
+              : '');
+          const doc = await vscode.workspace.openTextDocument({ content: md, language: 'markdown' });
+          await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: true });
+        } catch (err) {
+          await guideOnError(`CodebaseOS Ask failed: ${err instanceof Error ? err.message : String(err)}.`);
+        }
+      }
+    );
+  });
+  context.subscriptions.push(askCommand);
+
+  // Command: codebaseos.risk — knowledge-risk files (low bus-factor).
+  const riskCommand = vscode.commands.registerCommand('codebaseos.risk', async () => {
+    const repo = await resolveRepo();
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'CodebaseOS: computing knowledge risk…' },
+      async () => {
+        try {
+          const r = await client.risk(repo);
+          const items = r.files.map((f) => ({
+            label: `$(${f.risk === 'high' ? 'flame' : f.risk === 'medium' ? 'warning' : 'check'}) ${f.path}`,
+            description: `${f.risk} · author: ${f.author || 'unknown'}`,
+          }));
+          await vscode.window.showQuickPick(items, {
+            title: 'Knowledge-risk files (low bus-factor first)',
+            placeHolder: 'Files resting on a rare contributor',
+          });
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `CodebaseOS Risk failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    );
+  });
+  context.subscriptions.push(riskCommand);
+
+  // Command: codebaseos.auditReport — open a shareable provenance report.
+  const auditCommand = vscode.commands.registerCommand('codebaseos.auditReport', async () => {
+    const repo = await resolveRepo();
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'CodebaseOS: building provenance report…' },
+      async () => {
+        try {
+          const r = await client.auditReport(repo);
+          const doc = await vscode.workspace.openTextDocument({ content: r.markdown, language: 'markdown' });
+          await vscode.window.showTextDocument(doc, { preview: false });
+        } catch (err) {
+          await guideOnError(`CodebaseOS Audit report failed: ${err instanceof Error ? err.message : String(err)}.`);
+        }
+      }
+    );
+  });
+  context.subscriptions.push(auditCommand);
+
   // Command: codebaseos.compare — run /why (with graph) and /baseline-rag
   // (without graph) side by side to show the value of HydraDB provenance.
   const compareCommand = vscode.commands.registerCommand(

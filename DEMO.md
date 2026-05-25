@@ -78,6 +78,23 @@ Dashboard: http://localhost:3000 · Backend: http://localhost:8000
 9. **Onboarding tour** — VS Code *Generate onboarding tour for current module*:
    overview, where to start, key files / people / decisions for a module.
 
+## Live GitHub webhook (optional — big wow)
+
+Make a real PR update the graph on stage:
+
+```bash
+make backend        # T1
+make webhooks       # T2 → prints an https forwarding URL (ngrok)
+```
+In the repo's GitHub settings → Webhooks → Add webhook:
+- **Payload URL:** `<forwarding-url>/webhook`
+- **Content type:** `application/json`
+- **Events:** Pushes, Pull requests, Issues
+
+Now open a PR (or push) → the new commit/PR streams into the dashboard firehose,
+the graph grows, and the Merkle chain extends — live. (No tunnel? The
+`+commit/+pr/+issue` firehose buttons simulate the same thing.)
+
 ## Integrity & cost story
 
 - `cbos verify` — walks the Merkle chain end-to-end, recomputes every hash.
